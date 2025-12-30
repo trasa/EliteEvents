@@ -1,10 +1,27 @@
 using Meancat.EliteEvents.Web.Components;
+using Meancat.EliteEvents.Web.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Configuration
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+    .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true);
+if (builder.Environment.IsDevelopment())
+{
+    var localUser = Path.Combine(Directory.GetCurrentDirectory(), "appsettings.LocalUser.json");
+    builder.Configuration.AddJsonFile(localUser, optional: true, reloadOnChange: true);
+}
+
+builder.Configuration.AddEnvironmentVariables();
+
+// my services
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+builder.Services
+    .AddHttpContextAccessor()
+    .AddSignalR();
 
 var app = builder.Build();
 
@@ -18,11 +35,11 @@ if (!app.Environment.IsDevelopment())
 
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseHttpsRedirection();
-
+app.UseStaticFiles();
 app.UseAntiforgery();
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
-
+app.MapHub<EliteHub>("/elite-hub");
 app.Run();
