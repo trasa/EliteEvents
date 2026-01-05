@@ -1,5 +1,8 @@
+using EliteJournalReader;
 using Meancat.EliteEvents.Web.Components;
 using Meancat.EliteEvents.Web.Hubs;
+using Meancat.EliteEvents.Web.Services;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,6 +18,13 @@ if (builder.Environment.IsDevelopment())
 builder.Configuration.AddEnvironmentVariables();
 
 // my services
+builder.Services.Configure<EliteJournalOptions>(builder.Configuration.GetSection("EliteJournal"));
+
+builder.Services.AddSingleton<JournalWatcher>(sp => new JournalWatcher(sp.GetRequiredService<IOptions<EliteJournalOptions>>().Value.Path));
+builder.Services.AddSingleton<StatusWatcher>(sp => new StatusWatcher(sp.GetRequiredService<IOptions<EliteJournalOptions>>().Value.Path, false));
+builder.Services
+    .AddHostedService<EliteJournalService>()
+    .AddHostedService<EliteStatusService>();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()

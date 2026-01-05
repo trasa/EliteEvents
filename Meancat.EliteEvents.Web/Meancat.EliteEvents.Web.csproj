@@ -8,7 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="EliteJournalReader" Version="4.2.1" />
+      <PackageReference Include="EliteJournalReader" Version="4.2.1-alpha.gf79025f26e" />
       <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.1" />
     </ItemGroup>
 

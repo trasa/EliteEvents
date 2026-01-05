@@ -1,0 +1,131 @@
+@page "/events"
+@using Microsoft.AspNetCore.SignalR.Client
+@using EliteJournalReader.Events
+@implements IAsyncDisposable
+@inject NavigationManager Navigation
+
+<PageTitle>Elite Dangerous Events</PageTitle>
+
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3>Live Status Events</h3>
+        <div class="d-flex gap-2 align-items-center">
+            <span class="badge @GetConnectionBadgeClass()">@connectionStatus</span>
+            <button class="btn btn-sm btn-secondary" @onclick="ClearEvents">Clear</button>
+        </div>
+    </div>
+    @if (!events.Any()) {
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i> Waiting for status events...
+        </div>
+    } else {
+        <div class="event-stream">
+            @foreach (var evt in events)
+            {
+                <div class="event-card @GetEventClass(evt.EventName)">
+                    <div class="event-header">
+                        <span class="event-name">@evt.EventName</span>
+                        <span class="event-time">@evt.Timestamp.ToString("HH:mm:ss.fff")</span>
+                    </div>
+                    <pre class="event-data">@evt.ToJson()</pre>
+                </div>
+            }
+        </div>
+    }
+</div>
+@code {
+   private HubConnection? hubConnection;
+    private List<StatusFileEvent> events = [];
+    private const int MaxEvents = 100;
+    private string connectionStatus = "Disconnected";
+
+    protected override async Task OnInitializedAsync()
+    {
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/elite-hub"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        // Handle incoming status events - matches your service's SendAsync call
+        hubConnection.On<StatusFileEvent>("ReceiveStatus", async (eventData) =>
+        {
+            events.Insert(0, eventData);
+
+            // Trim to max events
+            if (events.Count > MaxEvents)
+            {
+                events.RemoveRange(MaxEvents, events.Count - MaxEvents);
+            }
+
+            await InvokeAsync(StateHasChanged);
+        });
+
+        // Connection lifecycle handlers
+        hubConnection.Reconnecting += error =>
+        {
+            connectionStatus = "Reconnecting...";
+            InvokeAsync(StateHasChanged);
+            return Task.CompletedTask;
+        };
+
+        hubConnection.Reconnected += connectionId =>
+        {
+            connectionStatus = "Connected";
+            InvokeAsync(StateHasChanged);
+            return Task.CompletedTask;
+        };
+
+        hubConnection.Closed += error =>
+        {
+            connectionStatus = "Disconnected";
+            InvokeAsync(StateHasChanged);
+            return Task.CompletedTask;
+        };
+
+        try
+        {
+            await hubConnection.StartAsync();
+            connectionStatus = "Connected";
+        }
+        catch (Exception ex)
+        {
+            connectionStatus = $"Failed: {ex.Message}";
+        }
+    }
+
+    private string GetEventClass(string eventName)
+    {
+        return eventName?.ToLower() switch
+        {
+            "docked" => "event-docked",
+            "undocked" => "event-undocked",
+            "fsdjump" => "event-fsdJump",
+            "location" => "event-location",
+            _ => "event-default"
+        };
+    }
+
+    private string GetConnectionBadgeClass()
+    {
+        return connectionStatus switch
+        {
+            "Connected" => "bg-success",
+            "Reconnecting..." => "bg-warning",
+            "Disconnected" => "bg-secondary",
+            _ => "bg-danger"
+        };
+    }
+
+    private void ClearEvents()
+    {
+        events.Clear();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+}

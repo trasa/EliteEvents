@@ -58,3 +58,91 @@ h1:focus {
 .form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
     text-align: start;
 }
+
+ .event-stream {
+     max-height: calc(100vh - 200px);
+     overflow-y: auto;
+     display: flex;
+     flex-direction: column;
+     gap: 0.75rem;
+ }
+
+.event-card {
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 1rem;
+    transition: all 0.2s ease;
+    animation: slideIn 0.3s ease-out;
+}
+
+.event-card:hover {
+    box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.075);
+}
+
+.event-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.event-name {
+    font-weight: 600;
+    color: #0d6efd;
+    font-size: 1rem;
+}
+
+.event-time {
+    color: #6c757d;
+    font-size: 0.875rem;
+    font-family: 'Courier New', monospace;
+}
+
+.event-data {
+    margin: 0;
+    padding: 0.75rem;
+    background: #f8f9fa;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-x: auto;
+}
+
+.event-docked {
+    border-left: 4px solid #198754;
+}
+
+.event-undocked {
+    border-left: 4px solid #dc3545;
+}
+
+.event-fsdJump {
+    border-left: 4px solid #0dcaf0;
+}
+
+.event-location {
+    border-left: 4px solid #6f42c1;
+}
+
+.event-default {
+    border-left: 4px solid #6c757d;
+}
+
+@keyframes slideIn {
+     from {
+         opacity: 0;
+         transform: translateY(-10px);
+     }
+     to {
+         opacity: 1;
+         transform: translateY(0);
+     }
+ }
+
+.badge {
+    padding: 0.5rem 1rem;
+}
