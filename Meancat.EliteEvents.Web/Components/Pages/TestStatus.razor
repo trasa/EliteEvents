@@ -1,0 +1,170 @@
+@page "/test-status"
+@using EliteJournalReader.Events
+@using Meancat.EliteEvents.Web.Hubs
+@using Microsoft.AspNetCore.SignalR
+@inject IHubContext<EliteHub> HubContext
+@inject ILogger<TestStatus> Logger
+@rendermode InteractiveServer
+
+<PageTitle>Test Status Events</PageTitle>
+
+<h3>Test Status Events</h3>
+
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title">Send Test Status Event</h5>
+
+
+            <div class="mb-3">
+                <label class="form-label fw-bold">Status Flags</label>
+                <div class="border rounded p-3" style="max-height: 400px; overflow-y: auto;">
+                    <div class="row g-2">
+                        @foreach (StatusFlags flag in Enum.GetValues(typeof(StatusFlags)))
+                        {
+                            @if (flag != StatusFlags.None)
+                            {
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox"
+                                               id="status-@flag"
+                                               checked="@_selectedStatusFlags.HasFlag(flag)"
+                                               @onchange="@(e => ToggleStatusFlag(flag, (bool)e.Value!))" />
+                                        <label class="form-check-label" for="status-@flag">
+                                            @FormatFlagName(flag.ToString())
+                                        </label>
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-muted">Selected: @((long)_selectedStatusFlags) (0x@(((long)_selectedStatusFlags).ToString("X")))</small>
+                        <button class="btn btn-sm btn-outline-secondary ms-2" @onclick="ClearStatusFlags">Clear All</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-bold">Status Flags 2</label>
+                <div class="border rounded p-3" style="max-height: 400px; overflow-y: auto;">
+                    <div class="row g-2">
+                        @foreach (MoreStatusFlags flag in Enum.GetValues(typeof(MoreStatusFlags)))
+                        {
+                            @if (flag != MoreStatusFlags.None)
+                            {
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox"
+                                               id="status2-@flag"
+                                               checked="@_selectedStatusFlags2.HasFlag(flag)"
+                                               @onchange="@(e => ToggleStatusFlag2(flag, (bool)e.Value!))" />
+                                        <label class="form-check-label" for="status2-@flag">
+                                            @FormatFlagName(flag.ToString())
+                                        </label>
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-muted">Selected: @((long)_selectedStatusFlags2) (0x@(((long)_selectedStatusFlags2).ToString("X")))</small>
+                        <button class="btn btn-sm btn-outline-secondary ms-2" @onclick="ClearStatusFlags2">Clear All</button>
+                    </div>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" @onclick="SendStatusEvent" disabled="@_isSending">
+                @if (_isSending)
+                {
+                    <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                    <span>Sending...</span>
+                }
+                else
+                {
+                    <span>Send Status Event</span>
+                }
+            </button>
+
+            @if (!string.IsNullOrEmpty(_lastSentMessage))
+            {
+                <div class="alert alert-success mt-3" role="alert">
+                    <strong>Sent!</strong> @_lastSentMessage
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                <div class="alert alert-danger mt-3" role="alert">
+                    <strong>Error:</strong> @_errorMessage
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+
+@code {
+    private bool _isSending;
+    private string _lastSentMessage = "";
+    private string _errorMessage = "";
+
+    private StatusFlags _selectedStatusFlags = StatusFlags.None;
+    private MoreStatusFlags _selectedStatusFlags2 = MoreStatusFlags.None;
+
+    private void ToggleStatusFlag(StatusFlags flag, bool isChecked)
+    {
+        if (isChecked)
+            _selectedStatusFlags |= flag;
+        else
+            _selectedStatusFlags &= ~flag;
+    }
+
+    private void ToggleStatusFlag2(MoreStatusFlags flag, bool isChecked)
+    {
+        if (isChecked)
+            _selectedStatusFlags2 |= flag;
+        else
+            _selectedStatusFlags2 &= ~flag;
+    }
+
+    private void ClearStatusFlags() => _selectedStatusFlags = StatusFlags.None;
+    private void ClearStatusFlags2() => _selectedStatusFlags2 = MoreStatusFlags.None;
+
+    private string FormatFlagName(string flagName)
+    {
+        // Add spaces before capital letters
+        return System.Text.RegularExpressions.Regex.Replace(flagName, "([a-z])([A-Z])", "$1 $2");
+    }
+
+    private async Task SendStatusEvent()
+    {
+        _isSending = true;
+        _errorMessage = "";
+        _lastSentMessage = "";
+
+        try
+        {
+            var statusEvent = new StatusFileEvent
+            {
+                Timestamp = DateTime.UtcNow,
+                Flags = _selectedStatusFlags,
+                Flags2 = _selectedStatusFlags2
+            };
+
+            Logger.LogInformation("Test Status: {@statusEvent}", statusEvent);
+            await HubContext.Clients.All.SendAsync("ReceiveStatus", statusEvent);
+
+            _lastSentMessage = $"Sent status at {DateTime.Now:HH:mm:ss}";
+        }
+        catch (Exception e)
+        {
+            Logger.LogError(e, "Error broadcasting test status event");
+            _errorMessage = $"Failed to send: {e.Message}";
+        }
+        finally
+        {
+            _isSending = false;
+        }
+    }
+}

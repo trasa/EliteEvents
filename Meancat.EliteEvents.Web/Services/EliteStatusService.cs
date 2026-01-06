@@ -33,7 +33,6 @@ public class EliteStatusService : BackgroundService
     {
         try
         {
-            // TODO timestamp?
             _logger.LogInformation("Status: {@statusEvent}", statusEvent);
             await _hubContext.Clients.All.SendAsync("ReceiveStatus", statusEvent, cancellationToken: stoppingToken);
         }
