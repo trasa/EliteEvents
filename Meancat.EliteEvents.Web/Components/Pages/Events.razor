@@ -1,9 +1,9 @@
 @page "/events"
 @using Microsoft.AspNetCore.SignalR.Client
 @using EliteJournalReader.Events
-@implements IAsyncDisposable
+@rendermode InteractiveServer
 @inject NavigationManager Navigation
-
+@inject ILogger<Events> Logger
 <PageTitle>Elite Dangerous Events</PageTitle>
 
 <div class="container-fluid mt-4">
@@ -14,11 +14,7 @@
             <button class="btn btn-sm btn-secondary" @onclick="ClearEvents">Clear</button>
         </div>
     </div>
-    @if (!events.Any()) {
-        <div class="alert alert-info">
-            <i class="bi bi-info-circle"></i> Waiting for status events...
-        </div>
-    } else {
+    @if (events.Any()) {
         <div class="event-stream">
             @foreach (var evt in events)
             {
@@ -27,7 +23,9 @@
                         <span class="event-name">@evt.EventName</span>
                         <span class="event-time">@evt.Timestamp.ToString("HH:mm:ss.fff")</span>
                     </div>
-                    <pre class="event-data">@evt.ToJson()</pre>
+                    <pre class="event-data">Status Flags:@evt.Flags</pre>
+                    <pre class="event-data">Other Status Flags: @evt.Flags2</pre>
+                    <pre class="event-data">Fuel: @evt.Fuel.FuelMain @evt.Fuel.FuelReservoir</pre>
                 </div>
             }
         </div>
@@ -44,12 +42,23 @@
         hubConnection = new HubConnectionBuilder()
             .WithUrl(Navigation.ToAbsoluteUri("/elite-hub"))
             .WithAutomaticReconnect()
+            .ConfigureLogging(logging =>
+            {
+                logging.SetMinimumLevel(LogLevel.Debug);
+                logging.AddConsole();
+            })
             .Build();
+
+        hubConnection.ServerTimeout = TimeSpan.FromSeconds(60);
+        hubConnection.KeepAliveInterval = TimeSpan.FromSeconds(15);
 
         // Handle incoming status events - matches your service's SendAsync call
         hubConnection.On<StatusFileEvent>("ReceiveStatus", async (eventData) =>
         {
+            Logger.LogInformation("event received");
+            Console.WriteLine("event receive");
             events.Insert(0, eventData);
+            Console.WriteLine($"events: {events.Count}");
 
             // Trim to max events
             if (events.Count > MaxEvents)
@@ -60,37 +69,8 @@
             await InvokeAsync(StateHasChanged);
         });
 
-        // Connection lifecycle handlers
-        hubConnection.Reconnecting += error =>
-        {
-            connectionStatus = "Reconnecting...";
-            InvokeAsync(StateHasChanged);
-            return Task.CompletedTask;
-        };
-
-        hubConnection.Reconnected += connectionId =>
-        {
-            connectionStatus = "Connected";
-            InvokeAsync(StateHasChanged);
-            return Task.CompletedTask;
-        };
-
-        hubConnection.Closed += error =>
-        {
-            connectionStatus = "Disconnected";
-            InvokeAsync(StateHasChanged);
-            return Task.CompletedTask;
-        };
-
-        try
-        {
-            await hubConnection.StartAsync();
-            connectionStatus = "Connected";
-        }
-        catch (Exception ex)
-        {
-            connectionStatus = $"Failed: {ex.Message}";
-        }
+        await hubConnection.StartAsync();
+        connectionStatus = "Connected";
     }
 
     private string GetEventClass(string eventName)
@@ -118,14 +98,8 @@
 
     private void ClearEvents()
     {
+        Console.WriteLine("clear events");
         events.Clear();
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        if (hubConnection is not null)
-        {
-            await hubConnection.DisposeAsync();
-        }
-    }
 }
