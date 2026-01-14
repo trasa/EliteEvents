@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Meancat.EliteEvents.Web", "Meancat.EliteEvents.Web\Meancat.EliteEvents.Web.csproj", "{5277C958-19D7-4991-97E0-E8FD3BE9318D}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EliteEvents.Web", "EliteEvents.Web\EliteEvents.Web.csproj", "{5277C958-19D7-4991-97E0-E8FD3BE9318D}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

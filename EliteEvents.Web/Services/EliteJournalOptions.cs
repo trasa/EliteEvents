@@ -1,4 +1,4 @@
-namespace Meancat.EliteEvents.Web.Services;
+namespace EliteEvents.Web.Services;
 
 public class EliteJournalOptions
 {

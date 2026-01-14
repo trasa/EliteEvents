@@ -1,7 +1,7 @@
 using EliteJournalReader;
-using Meancat.EliteEvents.Web.Components;
-using Meancat.EliteEvents.Web.Hubs;
-using Meancat.EliteEvents.Web.Services;
+using EliteEvents.Web.Components;
+using EliteEvents.Web.Hubs;
+using EliteEvents.Web.Services;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
