@@ -5,7 +5,7 @@ using Ionic.Zlib;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json.Linq;
 
-namespace EliteEvents.Web.Services;
+namespace EliteEvents.Web.Services.Eddn;
 
 public class EddnSubscriber : BackgroundService
 {
@@ -16,14 +16,7 @@ public class EddnSubscriber : BackgroundService
     {
         _logger = logger;
         _options = options.Value;
-        //_eventFirer = eventFirer;
-        //_eventFirer.GetEvent<DockedEvent>()?.AddHandler((_, e) => PrintSimpleEvent(e));
-        /*_eventFirer.MessageReceived += (s, e) =>
-        {
-            _logger.LogInformation("Eddn Event: {EventType}", e.EventType);
-        };*/
     }
-
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {

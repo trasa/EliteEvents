@@ -3,7 +3,7 @@ using EliteJournalReader.Events;
 using EliteEvents.Web.Hubs;
 using Microsoft.AspNetCore.SignalR;
 
-namespace EliteEvents.Web.Services;
+namespace EliteEvents.Web.Services.EliteJournal;
 
 public class EliteJournalService : BackgroundService
 {
