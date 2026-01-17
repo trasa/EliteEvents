@@ -19,12 +19,18 @@ builder.Configuration.AddEnvironmentVariables();
 
 // my services
 builder.Services.Configure<EliteJournalOptions>(builder.Configuration.GetSection("EliteJournal"));
+builder.Services.Configure<EddnOptions>(builder.Configuration.GetSection("Eddn"));
 
-builder.Services.AddSingleton<JournalWatcher>(sp => new JournalWatcher(sp.GetRequiredService<IOptions<EliteJournalOptions>>().Value.Path));
-builder.Services.AddSingleton<StatusWatcher>(sp => new StatusWatcher(sp.GetRequiredService<IOptions<EliteJournalOptions>>().Value.Path, false));
+builder.Services
+    .AddSingleton<JournalWatcher>(sp => new JournalWatcher(sp.GetRequiredService<IOptions<EliteJournalOptions>>().Value.Path))
+    .AddSingleton<StatusWatcher>(sp => new StatusWatcher(sp.GetRequiredService<IOptions<EliteJournalOptions>>().Value.Path, false))
+    .AddSingleton<JournalEventLoader>(_ => new JournalEventLoader(JournalEventLoader.FindHandlers()))
+    .AddSingleton<JournalEventFirer>();
+
 builder.Services
     .AddHostedService<EliteJournalService>()
-    .AddHostedService<EliteStatusService>();
+    .AddHostedService<EliteStatusService>()
+    .AddHostedService<EddnSubscriber>();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()

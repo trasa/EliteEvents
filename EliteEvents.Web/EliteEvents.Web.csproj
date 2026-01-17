@@ -8,8 +8,10 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="EliteJournalReader" Version="4.2.1-alpha.g9d0b56f422" />
+      <PackageReference Include="EliteJournalReader" Version="4.2.1-alpha.gb140ebb864" />
       <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.1" />
+      <PackageReference Include="Iconic.Zlib.Netstandard" Version="1.0.0" />
+      <PackageReference Include="NetMQ" Version="4.0.2.2" />
     </ItemGroup>
 
 </Project>
