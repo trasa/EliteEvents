@@ -6,9 +6,10 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
     </PropertyGroup>
-    
+
     <Target Name="NSwag" BeforeTargets="CoreCompile">
-        <Exec WorkingDirectory="$(ProjectDir)" Command="dotnet nswag jsonschema2csclient /name:JournalMessage /namespace:EliteEvents.Web.Eddn /input:https://eddn.edcd.io/schemas/journal/1 /output:Eddn/JournalMessage.g.cs " /> 
+        <Exec WorkingDirectory="$(ProjectDir)" Command="dotnet nswag jsonschema2csclient /name:JournalMessage /namespace:EliteEvents.Web.Eddn.Journal /input:https://eddn.edcd.io/schemas/journal/1 /output:Eddn/Journal.g.cs " />
+        <Exec WorkingDirectory="$(ProjectDir)" Command="dotnet nswag jsonschema2csclient /name:ApproachSettlementMessage /namespace:EliteEvents.Web.Eddn.ApproachSettlement /input:https://eddn.edcd.io/schemas/approachsettlement/1 /output:Eddn/ApproachSettlement.g.cs " />
     </Target>
 
     <ItemGroup>

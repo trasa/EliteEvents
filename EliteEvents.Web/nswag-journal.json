@@ -1,0 +1,28 @@
+{
+  "runtime": "Net100",
+  "defaultVariables": null,
+  "documentGenerator": {
+    "fromDocument": {
+      "url": "https://eddn.edcd.io/schemas/journal/1",
+      "output": null
+    }
+  },
+  "codeGenerators": {
+    "jsonSchemaToDataAnnotations": {
+      "className": "JournalMessage",
+      "namespace": "EliteEvents.Web.Eddn.Journal",
+      "output": "Eddn/Journal.g.cs",
+      "integerType": "long",
+      "dateType": "System.DateTime",
+      "dateTimeType": "System.DateTime",
+      "timeType": "System.TimeSpan",
+      "timeSpanType": "System.TimeSpan",
+      "arrayType": "System.Collections.Generic.List",
+      "dictionaryType": "System.Collections.Generic.Dictionary",
+      "generateDataAnnotations": true,
+      "generateJsonMethods": false,
+      "requiredPropertiesMustBeDefined": false,
+      "generateDefaultValues": true
+    }
+  }
+}

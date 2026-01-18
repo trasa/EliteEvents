@@ -10,15 +10,19 @@ namespace EliteEvents.Web.Services.Eddn;
 public class EddnSubscriber : BackgroundService
 {
     private readonly ILogger<EddnSubscriber> _logger;
+    private readonly HandlerProvider _handlerProvider;
     private readonly EddnOptions _options;
 
-    public EddnSubscriber(ILogger<EddnSubscriber> logger, IOptions<EddnOptions> options)
+    public EddnSubscriber(ILogger<EddnSubscriber> logger,
+        IOptions<EddnOptions> options,
+        HandlerProvider handlerProvider)
     {
         _logger = logger;
+        _handlerProvider = handlerProvider;
         _options = options.Value;
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var utf8 = new UTF8Encoding();
         using var client = new SubscriberSocket();
@@ -31,22 +35,17 @@ public class EddnSubscriber : BackgroundService
             var uncompressed = ZlibStream.UncompressBuffer(b);
             if (uncompressed != null)
             {
-                var result = utf8.GetString(uncompressed);
-                //_logger.LogInformation("received: {Event}", result);
-                var evt = JObject.Parse(result);
-                var eventType = evt["message"]?.Value<string>("event");
-                if (string.IsNullOrEmpty(eventType))
+                var str = utf8.GetString(uncompressed);
+                _logger.LogInformation("Received: {MessageJson}", str);
+                var token = JToken.Parse(str);
+                var schema = token["$schemaRef"]?.Value<string>();
+                var handler = _handlerProvider.GetHandler(schema);
+                if (handler != null)
                 {
-                    _logger.LogInformation("unknown: {Message}", result);
+                    await handler.Handle(token);
                 }
-                else
-                {
-                    _logger.LogInformation("received event: {EventType}", eventType);
-                }
-
             }
         }
-
-        return Task.CompletedTask;
+        _logger.LogInformation("Subscriber stopped");
     }
 }

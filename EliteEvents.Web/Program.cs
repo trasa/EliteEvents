@@ -2,6 +2,7 @@ using EliteJournalReader;
 using EliteEvents.Web.Components;
 using EliteEvents.Web.Hubs;
 using EliteEvents.Web.Services.Eddn;
+using EliteEvents.Web.Services.Eddn.Handlers;
 using EliteEvents.Web.Services.EliteJournal;
 using Microsoft.Extensions.Options;
 
@@ -18,16 +19,26 @@ if (builder.Environment.IsDevelopment())
 
 builder.Configuration.AddEnvironmentVariables();
 
-// my services
+// Configuration / IOptions
 builder.Services.Configure<EliteJournalOptions>(builder.Configuration.GetSection("EliteJournal"));
 builder.Services.Configure<EddnOptions>(builder.Configuration.GetSection("Eddn"));
 
+// Elite Journal Reader Services
 builder.Services
     .AddSingleton<JournalWatcher>(sp => new JournalWatcher(sp.GetRequiredService<IOptions<EliteJournalOptions>>().Value.Path))
     .AddSingleton<StatusWatcher>(sp => new StatusWatcher(sp.GetRequiredService<IOptions<EliteJournalOptions>>().Value.Path, false))
     .AddSingleton<JournalEventLoader>(_ => new JournalEventLoader(JournalEventLoader.FindHandlers()))
     .AddSingleton<JournalEventFirer>();
 
+// message handlers
+builder.Services.AddSingleton<HandlerProvider>()
+    .AddSingleton<JournalHandler>()
+    .AddSingleton<ApproachSettlementHandler>()
+    .AddSingleton<IEddnHandler>(sp => sp.GetRequiredService<JournalHandler>())
+    .AddSingleton<IEddnHandler>(sp => sp.GetRequiredService<ApproachSettlementHandler>());
+
+
+// hosted services
 builder.Services
     .AddHostedService<EliteJournalService>()
     .AddHostedService<EliteStatusService>()
