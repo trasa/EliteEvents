@@ -1,3 +1,4 @@
+using System.ServiceModel.Security;
 using EliteEvents.Web.Eddn.Journal;
 using Newtonsoft.Json.Linq;
 
@@ -47,7 +48,11 @@ public class JournalHandler : IEddnHandler
     }
     private Task HandleDocked(Message message)
     {
-        _logger.LogInformation("Handled Docked event at {System}", message.StarSystem);
+        message.AdditionalProperties.TryGetValue("StationType", out var stationType);
+        message.AdditionalProperties.TryGetValue("StationName", out var stationName);
+        _logger.LogInformation("Handled Docked event at {System} System -- {StationName} station ({StationType})",
+            message.StarSystem, stationName, stationType);
+
         return Task.CompletedTask;
     }
 }

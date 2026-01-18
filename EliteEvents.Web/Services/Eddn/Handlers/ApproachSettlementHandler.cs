@@ -9,6 +9,6 @@ public class ApproachSettlementHandler : IEddnHandler
 
     public Task Handle(JToken token)
     {
-        throw new NotImplementedException();
+        return Task.CompletedTask;
     }
 }

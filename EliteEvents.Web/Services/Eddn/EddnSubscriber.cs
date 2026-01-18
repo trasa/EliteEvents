@@ -36,7 +36,7 @@ public class EddnSubscriber : BackgroundService
             if (uncompressed != null)
             {
                 var str = utf8.GetString(uncompressed);
-                _logger.LogInformation("Received: {MessageJson}", str);
+                //_logger.LogInformation("Received: {MessageJson}", str);
                 var token = JToken.Parse(str);
                 var schema = token["$schemaRef"]?.Value<string>();
                 var handler = _handlerProvider.GetHandler(schema);
