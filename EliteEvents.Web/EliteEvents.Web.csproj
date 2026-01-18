@@ -6,13 +6,21 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
     </PropertyGroup>
+    
+    <Target Name="NSwag" BeforeTargets="CoreCompile">
+        <Exec WorkingDirectory="$(ProjectDir)" Command="dotnet nswag jsonschema2csclient /name:JournalMessage /namespace:EliteEvents.Web.Eddn /input:https://eddn.edcd.io/schemas/journal/1 /output:Eddn/JournalMessage.g.cs " /> 
+    </Target>
 
     <ItemGroup>
-      <PackageReference Include="EliteJournalReader" Version="4.2.1-alpha.gb140ebb864" />
-      <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.1" />
-      <PackageReference Include="Iconic.Zlib.Netstandard" Version="1.0.0" />
-      <PackageReference Include="NetMQ" Version="4.0.2.2" />
-      <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+        <PackageReference Include="EliteJournalReader" Version="4.2.1-alpha.gb140ebb864" />
+        <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.1" />
+        <PackageReference Include="Iconic.Zlib.Netstandard" Version="1.0.0" />
+        <PackageReference Include="NetMQ" Version="4.0.2.2" />
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Folder Include="Eddn\" />
     </ItemGroup>
 
 </Project>
