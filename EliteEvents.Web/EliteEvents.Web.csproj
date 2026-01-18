@@ -10,8 +10,38 @@
     <Target Name="NSwag" BeforeTargets="CoreCompile">
         <Exec WorkingDirectory="$(ProjectDir)" Command="dotnet nswag jsonschema2csclient /name:JournalMessage /namespace:EliteEvents.Web.Eddn.Journal /input:https://eddn.edcd.io/schemas/journal/1 /output:Eddn/Journal.g.cs " />
         <Exec WorkingDirectory="$(ProjectDir)" Command="dotnet nswag jsonschema2csclient /name:ApproachSettlementMessage /namespace:EliteEvents.Web.Eddn.ApproachSettlement /input:https://eddn.edcd.io/schemas/approachsettlement/1 /output:Eddn/ApproachSettlement.g.cs " />
+        <ReplaceIntWithLong Files="$(ProjectDir)Eddn/Journal.g.cs;$(ProjectDir)Eddn/ApproachSettlement.g.cs" />
     </Target>
 
+    <!-- HACK: Replace all 'public int' with 'public long' in generated files 
+    Because I can't get the nswag.json to output correctly, and the jsonschema2csclient doesn't support overriding int type.
+    (That I can find, anyway.)
+    -->
+    <UsingTask TaskName="ReplaceIntWithLong" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+        <ParameterGroup>
+            <Files ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+        </ParameterGroup>
+        <Task>
+            <Using Namespace="System.IO" />
+            <Using Namespace="System.Text.RegularExpressions" />
+            <Code Type="Fragment" Language="cs">
+                <![CDATA[
+            foreach (var file in Files)
+            {
+                var path = file.ItemSpec;
+                if (File.Exists(path))
+                {
+                    var content = File.ReadAllText(path);
+                    content = Regex.Replace(content, @"\bpublic int\b", "public long");
+                    content = Regex.Replace(content, @"\bpublic int\?\b", "public long?");
+                    File.WriteAllText(path, content);
+                }
+            }
+            ]]>
+            </Code>
+        </Task>
+    </UsingTask>
+    
     <ItemGroup>
         <PackageReference Include="EliteJournalReader" Version="4.2.1-alpha.gb140ebb864" />
         <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.1" />
