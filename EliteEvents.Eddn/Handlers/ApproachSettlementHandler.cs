@@ -1,7 +1,6 @@
-using EliteEvents.Eddn.Handlers;
 using Newtonsoft.Json.Linq;
 
-namespace EliteEvents.Web.Services.Eddn.Handlers;
+namespace EliteEvents.Eddn.Handlers;
 
 
 public class ApproachSettlementHandler : IEddnHandler

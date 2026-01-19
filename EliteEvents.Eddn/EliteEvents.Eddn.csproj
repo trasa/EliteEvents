@@ -8,6 +8,9 @@
     
     <ItemGroup>
         <PackageReference Include="Iconic.Zlib.Netstandard" Version="1.0.0" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.2" />
+        <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.2" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" version="10.0.2" />
         <PackageReference Include="NetMQ" Version="4.0.2.2" />
         <PackageReference Include="Newtonsoft.Json" Version="$(NewtonsoftJsonVersion)" />
     </ItemGroup>
@@ -15,7 +18,7 @@
     <Target Name="NSwag" BeforeTargets="CoreCompile">
         <Exec WorkingDirectory="$(ProjectDir)" Command="dotnet nswag jsonschema2csclient /name:JournalMessage /namespace:EliteEvents.Eddn.Journal /input:https://eddn.edcd.io/schemas/journal/1 /output:Generated/Journal.g.cs " />
         <Exec WorkingDirectory="$(ProjectDir)" Command="dotnet nswag jsonschema2csclient /name:ApproachSettlementMessage /namespace:EliteEvents.Eddn.ApproachSettlement /input:https://eddn.edcd.io/schemas/approachsettlement/1 /output:Generated/ApproachSettlement.g.cs " />
-        <ReplaceIntWithLong Files="$(ProjectDir)Generated/*.g.cs" />
+        <ReplaceIntWithLong Files="$(ProjectDir)Generated/ApproachSettlement.g.cs;$(ProjectDir)Generated/Journal.g.cs" />
     </Target>
 
     <!-- HACK: Replace all 'public int' with 'public long' in generated files 
@@ -33,6 +36,7 @@
                 <![CDATA[
             foreach (var file in Files)
             {
+                Console.WriteLine($"Processing file: {file.ItemSpec}");
                 var path = file.ItemSpec;
                 if (File.Exists(path))
                 {

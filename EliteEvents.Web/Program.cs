@@ -1,10 +1,8 @@
-using EliteEvents.Eddn;
-using EliteEvents.Eddn.Handlers;
+using EliteEvents.Eddn.Config;
 using EliteJournalReader;
 using EliteEvents.Web.Components;
 using EliteEvents.Web.Hubs;
 using EliteEvents.Web.Services.Eddn;
-using EliteEvents.Web.Services.Eddn.Handlers;
 using EliteEvents.Web.Services.EliteJournal;
 using Microsoft.Extensions.Options;
 
@@ -32,19 +30,14 @@ builder.Services
     .AddSingleton<JournalEventLoader>(_ => new JournalEventLoader(JournalEventLoader.FindHandlers()))
     .AddSingleton<JournalEventFirer>();
 
-// message handlers
-builder.Services.AddSingleton<HandlerProvider>()
-    .AddSingleton<JournalHandler>()
-    .AddSingleton<ApproachSettlementHandler>()
-    .AddSingleton<IEddnHandler>(sp => sp.GetRequiredService<JournalHandler>())
-    .AddSingleton<IEddnHandler>(sp => sp.GetRequiredService<ApproachSettlementHandler>());
-
+// eddn (removing from this project todo)
+builder.Services.AddEddnStream();
 
 // hosted services
 builder.Services
     .AddHostedService<EliteJournalService>()
     .AddHostedService<EliteStatusService>()
-    .AddHostedService<EddnSubscriber>();
+    .AddHostedService<EddnStreamReceiver>();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()

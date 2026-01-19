@@ -1,9 +1,8 @@
-using System.ServiceModel.Security;
-using EliteEvents.Eddn.Handlers;
 using EliteEvents.Eddn.Journal;
+using Microsoft.Extensions.Logging;
 using Newtonsoft.Json.Linq;
 
-namespace EliteEvents.Web.Services.Eddn.Handlers;
+namespace EliteEvents.Eddn.Handlers;
 
 public class JournalHandler : IEddnHandler
 {
