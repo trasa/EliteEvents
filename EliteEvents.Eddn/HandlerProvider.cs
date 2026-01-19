@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
-using EliteEvents.Web.Services.Eddn.Handlers;
+using EliteEvents.Eddn.Handlers;
 
-namespace EliteEvents.Web.Services.Eddn;
+namespace EliteEvents.Eddn;
 
 public class HandlerProvider
 {

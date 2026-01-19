@@ -1,4 +1,5 @@
 using System.Text;
+using EliteEvents.Eddn;
 using NetMQ;
 using NetMQ.Sockets;
 using Ionic.Zlib;

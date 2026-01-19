@@ -1,3 +1,5 @@
+using EliteEvents.Eddn;
+using EliteEvents.Eddn.Handlers;
 using EliteJournalReader;
 using EliteEvents.Web.Components;
 using EliteEvents.Web.Hubs;

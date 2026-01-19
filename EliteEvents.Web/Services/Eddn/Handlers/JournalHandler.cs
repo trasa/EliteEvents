@@ -1,5 +1,6 @@
 using System.ServiceModel.Security;
-using EliteEvents.Web.Eddn.Journal;
+using EliteEvents.Eddn.Handlers;
+using EliteEvents.Eddn.Journal;
 using Newtonsoft.Json.Linq;
 
 namespace EliteEvents.Web.Services.Eddn.Handlers;

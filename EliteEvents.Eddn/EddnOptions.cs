@@ -1,4 +1,4 @@
-namespace EliteEvents.Web.Services.Eddn;
+namespace EliteEvents.Eddn;
 
 public class EddnOptions
 {
