@@ -9,9 +9,9 @@
 
     
     <ItemGroup>
-        <PackageReference Include="EliteJournalReader" Version="4.2.1-alpha.gb140ebb864" />
+        <PackageReference Include="EliteJournalReader" Version="$(EliteJournalReaderVersion)" />
         <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.1" />
-        <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+        <PackageReference Include="Newtonsoft.Json" Version="$(NewtonsoftJsonVersion)" />
     </ItemGroup>
     <ItemGroup>
         <ProjectReference Include="../EliteEvents.Eddn/EliteEvents.Eddn.csproj" />
