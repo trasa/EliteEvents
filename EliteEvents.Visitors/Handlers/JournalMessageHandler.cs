@@ -1,30 +1,24 @@
 using EliteEvents.Eddn.Journal;
-using EliteEvents.Eddn.MessageHandlers;
-using Microsoft.Extensions.Logging;
-using Newtonsoft.Json.Linq;
 
-namespace EliteEvents.Eddn.SchemaHandlers;
+namespace EliteEvents.Visitors.Handlers;
 
-public class JournalHandler : IEddnHandler
+public class JournalMessageHandler : IJournalMessageHandler
 {
-    private readonly ILogger<JournalHandler> _logger;
-    //private readonly IMessageHandlerProvider _handlerProvider;
+    private readonly ILogger<JournalMessageHandler> _logger;
 
-    public string Schema => "https://eddn.edcd.io/schemas/journal/1";
+    public MessageEvent[] Handles => [MessageEvent.Docked];
 
-    public JournalHandler(ILogger<JournalHandler> logger, IMessageHandlerProvider handlerProvider)
+    public JournalMessageHandler(ILogger<JournalMessageHandler> logger)
     {
         _logger = logger;
-        _handlerProvider = handlerProvider;
     }
 
-    private async Task Handle(JournalMessage journalMessage)
+    public async Task Handle(JournalMessage message)
     {
-        var handler = _handlerProvider.FindHandler(journalMessage.Message.Event);
-        switch (journalMessage.Message.Event)
+        switch (message.Message.Event)
         {
             case MessageEvent.Docked:
-                await HandleDocked(journalMessage.Message);
+                await HandleDocked(message.Message);
                 break;
             case MessageEvent.FSDJump:
                 break;
@@ -40,6 +34,7 @@ public class JournalHandler : IEddnHandler
                 break;
         }
     }
+
     private Task HandleDocked(Message message)
     {
         message.AdditionalProperties.TryGetValue("StationType", out var stationType);

@@ -1,5 +1,8 @@
 using EliteEvents.Eddn.Config;
+using EliteEvents.Eddn.Handlers;
+using EliteEvents.Eddn.Journal;
 using EliteEvents.Visitors.Components;
+using EliteEvents.Visitors.Handlers;
 using EliteEvents.Visitors.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -19,7 +22,9 @@ builder.Configuration.AddEnvironmentVariables();
 builder.Services.Configure<EddnOptions>(builder.Configuration.GetSection("Eddn"));
 
 // eddn
-builder.Services.AddEddnStream();
+builder.Services.AddEddnStream()
+    .AddSingleton<IJournalMessageHandler, JournalMessageHandler>()
+    .AddSingleton<IMessageHandler<JournalMessage, MessageEvent>, JournalMessageHandler>();
 
 // hosted services
 builder.Services

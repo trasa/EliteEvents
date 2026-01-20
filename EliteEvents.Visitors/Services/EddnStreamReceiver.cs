@@ -1,24 +1,26 @@
 using EliteEvents.Eddn;
-using EliteEvents.Eddn.SchemaHandlers;
+using EliteEvents.Eddn.Handlers;
+using EliteEvents.Eddn.Journal;
+using Newtonsoft.Json.Linq;
 
 namespace EliteEvents.Visitors.Services;
 
 public class EddnStreamReceiver : BackgroundService
 {
     private readonly ILogger<EddnStreamReceiver> _logger;
-    private readonly IMessageParser _messageParser;
-    private readonly ISchemaHandlerProvider _schemaHandlerProvider;
     private readonly IEddnStream _eddnStream;
+    private readonly IMessageFactory _messageFactory;
+    private readonly IMessageHandlerProvider<JournalMessage, MessageEvent> _handlers;
 
     public EddnStreamReceiver(ILogger<EddnStreamReceiver> logger,
-        IMessageParser messageParser,
-        ISchemaHandlerProvider schemaHandlerProvider,
-        IEddnStream eddnStream)
+        IEddnStream eddnStream,
+        IMessageFactory messageFactory,
+        IMessageHandlerProvider<JournalMessage, MessageEvent> handlers)
     {
         _logger = logger;
-        _messageParser = messageParser;
-        _schemaHandlerProvider = schemaHandlerProvider;
         _eddnStream = eddnStream;
+        _messageFactory = messageFactory;
+        _handlers = handlers;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -29,16 +31,26 @@ public class EddnStreamReceiver : BackgroundService
             var str = _eddnStream.Receive();
             if (str != null)
             {
-                //_logger.LogInformation("Received: {MessageJson}", str);
-                var token = _messageParser.Parse(str);
-                var message = _messageFactory.Create(token);
-                var handler = _schemaHandlerProvider.FindHandler(token);
-                if (handler != null)
+                var token = JToken.Parse(str);
+                var message = _messageFactory.Create( token);
+                if (message is JournalMessage journalMessage)
                 {
-                    await handler.Handle(token);
+                    _logger.LogInformation("Received journal message {Timestamp} - {Event}",
+                        journalMessage.Message.Timestamp, journalMessage.Message.Event);
+                    foreach (var handler in _handlers.GetMessageHandlers(journalMessage.Message.Event))
+                    {
+                        await handler.Handle(journalMessage);
+                    }
                 }
             }
         }
         _logger.LogInformation("Subscriber stopped");
+    }
+
+    public override void Dispose()
+    {
+        _logger.LogInformation("Subscriber disposed");
+        _eddnStream.Dispose();
+        base.Dispose();
     }
 }
