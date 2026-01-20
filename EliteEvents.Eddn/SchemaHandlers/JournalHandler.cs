@@ -1,32 +1,26 @@
 using EliteEvents.Eddn.Journal;
+using EliteEvents.Eddn.MessageHandlers;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json.Linq;
 
-namespace EliteEvents.Eddn.Handlers;
+namespace EliteEvents.Eddn.SchemaHandlers;
 
 public class JournalHandler : IEddnHandler
 {
     private readonly ILogger<JournalHandler> _logger;
+    //private readonly IMessageHandlerProvider _handlerProvider;
+
     public string Schema => "https://eddn.edcd.io/schemas/journal/1";
 
-    public JournalHandler(ILogger<JournalHandler> logger)
+    public JournalHandler(ILogger<JournalHandler> logger, IMessageHandlerProvider handlerProvider)
     {
         _logger = logger;
-    }
-
-    public async Task Handle(JToken token)
-    {
-        var message = token.ToObject<JournalMessage>();
-        if (message == null)
-        {
-            _logger.LogWarning("Unable to deserialize journal message {@Token}", token);
-            return;
-        }
-        await Handle(message);
+        _handlerProvider = handlerProvider;
     }
 
     private async Task Handle(JournalMessage journalMessage)
     {
+        var handler = _handlerProvider.FindHandler(journalMessage.Message.Event);
         switch (journalMessage.Message.Event)
         {
             case MessageEvent.Docked:

@@ -1,7 +1,7 @@
 using EliteEvents.Eddn;
 using EliteEvents.Eddn.SchemaHandlers;
 
-namespace EliteEvents.Web.Services.Eddn;
+namespace EliteEvents.Visitors.Services;
 
 public class EddnStreamReceiver : BackgroundService
 {
@@ -31,6 +31,7 @@ public class EddnStreamReceiver : BackgroundService
             {
                 //_logger.LogInformation("Received: {MessageJson}", str);
                 var token = _messageParser.Parse(str);
+                var message = _messageFactory.Create(token);
                 var handler = _schemaHandlerProvider.FindHandler(token);
                 if (handler != null)
                 {

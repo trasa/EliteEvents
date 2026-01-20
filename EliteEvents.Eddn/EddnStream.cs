@@ -48,7 +48,6 @@ public class EddnStream : IEddnStream
         return uncompressed != null ? _utf8Encoding.GetString(uncompressed) : null;
     }
 
-
     public void Dispose()
     {
         _client.Dispose();
