@@ -1,0 +1,144 @@
+@page "/carrier-lookup"
+@using EliteEvents.Visitors.Services
+@inject DockingRedisService DockingService
+@rendermode InteractiveServer
+
+<PageTitle>Fleet Carrier Visitors</PageTitle>
+
+<div class="container mt-4">
+    <h2>Fleet Carrier Visitors</h2>
+
+    <div class="row mt-4">
+        <div class="col-md-8">
+            <div class="input-group mb-3">
+                <input type="text"
+                       class="form-control"
+                       placeholder="Enter carrier ID"
+                       @bind="carrierName"
+                       @onkeydown="HandleKeyDown" />
+                <button class="btn btn-primary"
+                        @onclick="SearchCarrier"
+                        disabled="@(string.IsNullOrWhiteSpace(carrierName) || isLoading)">
+                    @if (isLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                        <span>Searching...</span>
+                    }
+                    else
+                    {
+                        <span>Search</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            @errorMessage
+            <button type="button" class="btn-close" @onclick="() => errorMessage = null"></button>
+        </div>
+    }
+
+    @if (searchPerformed && carrierInfo != null)
+    {
+        @if (carrierInfo.Count == 0)
+        {
+            <div class="alert alert-info">
+                No docking data found for system: <strong>@searchedCarrier</strong>
+            </div>
+        }
+        else
+        {
+            <div class="card">
+                <div class="card-header">
+                    <h4 class="mb-0">@searchedCarrier</h4>
+                    <small class="text-muted">@carrierInfo.Count day(s) found for docking</small>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th class="text-end">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var day in carrierInfo.OrderByDescending(s => s.Date))
+                                {
+                                    <tr>
+                                        <td>
+                                            <strong>@FormatDate(day.Date)</strong>
+                                        </td>
+                                        <td class="text-end">
+                                            <span class="badge bg-primary fs-6">@day.DockingCount</span>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                            <tfoot>
+                                <tr class="table-active">
+                                    <td colspan="2"><strong>Total</strong></td>
+                                    <td class="text-end">
+                                        <strong>@carrierInfo.Sum(s => s.DockingCount)</strong>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private string carrierName = "";
+    private string searchedCarrier = "";
+    private List<CarrierDockingInfo>? carrierInfo;
+    private bool isLoading = false;
+    private bool searchPerformed = false;
+    private string? errorMessage;
+
+    private async Task SearchCarrier()
+    {
+        if (string.IsNullOrWhiteSpace(carrierName))
+            return;
+
+        isLoading = true;
+        errorMessage = null;
+        searchPerformed = false;
+        carrierInfo = null;
+
+        try
+        {
+            searchedCarrier = carrierName.Trim();
+            carrierInfo = await DockingService.GetCarrierDockingAsync(searchedCarrier);
+            searchPerformed = true;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error searching for carrier: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SearchCarrier();
+        }
+    }
+
+    private string FormatDate(DateTimeOffset d)
+    {
+        return d.ToString("MMM dd, yyyy");
+    }
+}
