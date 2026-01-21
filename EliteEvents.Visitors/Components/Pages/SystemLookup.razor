@@ -1,0 +1,186 @@
+@page "/system-lookup"
+@using EliteEvents.Visitors.Services
+@inject DockingRedisService DockingService
+@rendermode InteractiveServer
+
+<PageTitle>System Visitors</PageTitle>
+
+<div class="container mt-4">
+    <h2>System Visitors</h2>
+
+    <div class="row mt-4">
+        <div class="col-md-8">
+            <div class="input-group mb-3">
+                <input type="text"
+                       class="form-control"
+                       placeholder="Enter system name"
+                       @bind="systemName"
+                       @onkeydown="HandleKeyDown" />
+                <button class="btn btn-primary"
+                        @onclick="SearchSystem"
+                        disabled="@(string.IsNullOrWhiteSpace(systemName) || isLoading)">
+                    @if (isLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                        <span>Searching...</span>
+                    }
+                    else
+                    {
+                        <span>Search</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            @errorMessage
+            <button type="button" class="btn-close" @onclick="() => errorMessage = null"></button>
+        </div>
+    }
+
+    @if (searchPerformed && stations != null)
+    {
+        @if (stations.Count == 0)
+        {
+            <div class="alert alert-info">
+                No docking data found for system: <strong>@searchedSystem</strong>
+            </div>
+        }
+        else
+        {
+            <div class="card">
+                <div class="card-header">
+                    <h4 class="mb-0">@searchedSystem</h4>
+                    <small class="text-muted">@stations.Count station(s) with recorded dockings</small>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Station Name</th>
+                                    <th>Type</th>
+                                    <th class="text-end">Total Dockings</th>
+                                    <th>Last Seen</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var station in stations.OrderByDescending(s => s.DockingCount))
+                                {
+                                    <tr>
+                                        <td>
+                                            <strong>@station.StationName</strong>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-secondary">@station.StationType</span>
+                                        </td>
+                                        <td class="text-end">
+                                            <span class="badge bg-primary fs-6">@station.DockingCount</span>
+                                        </td>
+                                        <td>
+                                            <small class="text-muted">@FormatLastSeen(station.LastSeen)</small>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                            <tfoot>
+                                <tr class="table-active">
+                                    <td colspan="2"><strong>Total</strong></td>
+                                    <td class="text-end">
+                                        <strong>@stations.Sum(s => s.DockingCount)</strong>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-3">
+                <h5>Summary</h5>
+                <ul class="list-group">
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Most Popular Station
+                        <span>
+                            <strong>@stations.OrderByDescending(s => s.DockingCount).First().StationName</strong>
+                            <span class="badge bg-success ms-2">@stations.Max(s => s.DockingCount) dockings</span>
+                        </span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Most Recent Activity
+                        <span class="text-muted">@FormatLastSeen(stations.Max(s => s.LastSeen))</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Station Types
+                        <span>
+                            @string.Join(", ", stations.Select(s => s.StationType).Distinct())
+                        </span>
+                    </li>
+                </ul>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private string systemName = "";
+    private string searchedSystem = "";
+    private List<StationDockingInfo>? stations;
+    private bool isLoading = false;
+    private bool searchPerformed = false;
+    private string? errorMessage;
+
+    private async Task SearchSystem()
+    {
+        if (string.IsNullOrWhiteSpace(systemName))
+            return;
+
+        isLoading = true;
+        errorMessage = null;
+        searchPerformed = false;
+        stations = null;
+
+        try
+        {
+            searchedSystem = systemName.Trim();
+            stations = await DockingService.GetSystemDockingAsync(searchedSystem);
+            searchPerformed = true;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error searching for system: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SearchSystem();
+        }
+    }
+
+    private string FormatLastSeen(DateTimeOffset lastSeen)
+    {
+        var timeAgo = DateTime.UtcNow - lastSeen;
+
+        if (timeAgo.TotalMinutes < 1)
+            return "Just now";
+        if (timeAgo.TotalMinutes < 60)
+            return $"{(int)timeAgo.TotalMinutes}m ago";
+        if (timeAgo.TotalHours < 24)
+            return $"{(int)timeAgo.TotalHours}h ago";
+        if (timeAgo.TotalDays < 7)
+            return $"{(int)timeAgo.TotalDays}d ago";
+
+        return lastSeen.ToString("MMM dd, yyyy");
+    }
+}
