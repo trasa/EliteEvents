@@ -35,8 +35,6 @@ public class EddnStreamReceiver : BackgroundService
                 var message = _messageFactory.Create( token);
                 if (message is JournalMessage journalMessage)
                 {
-                    _logger.LogInformation("Received journal message {Timestamp} - {Event}",
-                        journalMessage.Message.Timestamp, journalMessage.Message.Event);
                     foreach (var handler in _handlers.GetMessageHandlers(journalMessage.Message.Event))
                     {
                         await handler.Handle(journalMessage);

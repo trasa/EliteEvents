@@ -1,16 +1,19 @@
 using EliteEvents.Eddn.Journal;
+using EliteEvents.Visitors.Services;
 
 namespace EliteEvents.Visitors.Handlers;
 
 public class JournalMessageHandler : IJournalMessageHandler
 {
     private readonly ILogger<JournalMessageHandler> _logger;
+    private readonly DockingRedisService _dockingService;
 
     public MessageEvent[] Handles => [MessageEvent.Docked];
 
-    public JournalMessageHandler(ILogger<JournalMessageHandler> logger)
+    public JournalMessageHandler(ILogger<JournalMessageHandler> logger, DockingRedisService dockingService)
     {
         _logger = logger;
+        _dockingService = dockingService;
     }
 
     public async Task Handle(JournalMessage message)
@@ -18,7 +21,7 @@ public class JournalMessageHandler : IJournalMessageHandler
         switch (message.Message.Event)
         {
             case MessageEvent.Docked:
-                await HandleDocked(message.Message);
+                await HandleDocked(message);
                 break;
             case MessageEvent.FSDJump:
                 break;
@@ -35,13 +38,29 @@ public class JournalMessageHandler : IJournalMessageHandler
         }
     }
 
-    private Task HandleDocked(Message message)
+    private async Task HandleDocked(JournalMessage journal)
     {
-        message.AdditionalProperties.TryGetValue("StationType", out var stationType);
-        message.AdditionalProperties.TryGetValue("StationName", out var stationName);
-        _logger.LogInformation("Handled Docked event at {System} System -- {StationName} station ({StationType})",
-            message.StarSystem, stationName, stationType);
+        var ts = journal.Header.GatewayTimestamp;
+        if (!journal.Message.AdditionalProperties.TryGetValue("StationType", out var stationType))
+        {
+            stationType = "Unknown";
+        }
 
-        return Task.CompletedTask;
+        if (!journal.Message.AdditionalProperties.TryGetValue("StationName", out var stationName))
+        {
+            stationName = "Unknown";
+        }
+
+        _logger.LogInformation("Handled Docked event at {System} -- {StationName} -- ({StationType})",
+            journal.Message.StarSystem, stationName, stationType);
+
+        if (stationType.ToString() == "FleetCarrier")
+        {
+            await _dockingService.RecordFleetCarrierDockingAsync(stationName?.ToString() ?? "Unknown", ts);
+        }
+        else
+        {
+            await _dockingService.RecordStationDockingAsync(journal.Message.StarSystem, stationName?.ToString() ?? "Unknown", stationType?.ToString() ?? "Unknown", ts);
+        }
     }
 }

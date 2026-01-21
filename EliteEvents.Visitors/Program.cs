@@ -4,6 +4,7 @@ using EliteEvents.Eddn.Journal;
 using EliteEvents.Visitors.Components;
 using EliteEvents.Visitors.Handlers;
 using EliteEvents.Visitors.Services;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,6 +30,20 @@ builder.Services.AddEddnStream()
 // hosted services
 builder.Services
     .AddHostedService<EddnStreamReceiver>();
+
+// redis
+builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
+{
+    var environment = builder.Configuration.GetValue<string>("Environment")?.ToLower() ?? "local";
+    var config = builder.Configuration.GetConnectionString($"redis-{environment}") ?? "localhost:6379";
+    if (File.Exists("/run/secrets/redis-auth"))
+    {
+        var password = File.ReadAllText("/run/secrets/redis-auth").Trim();
+        config = $"{config},password={password}";
+    }
+    return ConnectionMultiplexer.Connect(config);
+});
+builder.Services.AddSingleton<DockingRedisService>();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
