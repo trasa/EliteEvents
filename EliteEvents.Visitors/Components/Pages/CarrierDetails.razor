@@ -1,0 +1,169 @@
+@page "/carrier-details/{CarrierId}"
+@using EliteEvents.Visitors.Services
+@inject DockingRedisService DockingService
+@inject NavigationManager Navigation
+@rendermode InteractiveServer
+
+<PageTitle>@CarrierId - Details</PageTitle>
+<div class="container mt-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/carrier-search">Carrier Search</a></li>
+            <li class="breadcrumb-item active" aria-current="page">@CarrierId</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Fleet Carrier Visitors</h2>
+        <a href="/carrier-search" class="btn btn-outline-primary">
+            <i class="bi bi-arrow-left"></i> Back to Search
+        </a>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-3">Loading carrier data...</p>
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            @errorMessage
+            <button type="button" class="btn-close" @onclick="() => errorMessage = null"></button>
+        </div>
+    }
+    else if (carrierInfo != null)
+    {
+        @if (carrierInfo.Count == 0)
+        {
+            <div class="alert alert-info">
+                No docking data found for carrier: <strong>@CarrierId</strong>
+            </div>
+        }
+        else
+        {
+            <div class="card">
+                <div class="card-header">
+                    <h4 class="mb-0">
+                        <a href="https://inara.cz/elite/station/?search=@CarrierId" target="_blank">
+                            @CarrierId
+                            <i class="bi bi-box-arrow-up-right small"></i>
+                        </a>
+                    </h4>
+                    <small class="text-muted">@carrierInfo.Count day(s) of docking data</small>
+                </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Total Visitors</h6>
+                                <h2 class="mb-0">@carrierInfo.Sum(s => s.DockingCount)</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Days Active</h6>
+                                <h2 class="mb-0">@carrierInfo.Count</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Avg. per Day</h6>
+                                <h2 class="mb-0">@Math.Round(carrierInfo.Average(s => s.DockingCount), 1)</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th class="text-end">Visitors</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var day in carrierInfo.OrderByDescending(s => s.Date))
+                        {
+                            <tr>
+                                <td>
+                                    <strong>@FormatDate(day.Date)</strong>
+                                </td>
+                                <td class="text-end">
+                                    <span class="badge bg-primary fs-6">@day.DockingCount</span>
+                                </td>
+                            </tr>
+                        }
+                        </tbody>
+                        <tfoot>
+                        <tr class="table-active">
+                            <td><strong>Total</strong></td>
+                            <td class="text-end">
+                                <strong>@carrierInfo.Sum(s => s.DockingCount)</strong>
+                            </td>
+                        </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string CarrierId { get; set; } = "";
+
+    private List<CarrierDockingInfo>? carrierInfo;
+    private bool isLoading = true;
+    private string? errorMessage;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadCarrierData();
+    }
+
+    private async Task LoadCarrierData()
+    {
+        if (string.IsNullOrWhiteSpace(CarrierId))
+        {
+            errorMessage = "No carrier ID provided";
+            isLoading = false;
+            return;
+        }
+
+        isLoading = true;
+        errorMessage = null;
+        carrierInfo = null;
+
+        try
+        {
+            var normalizedId = CarrierId.ToUpperInvariant().Trim();
+            carrierInfo = await DockingService.GetCarrierDockingAsync(normalizedId);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading carrier data: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string FormatDate(DateTimeOffset d)
+    {
+        return d.ToString("MMM dd, yyyy");
+    }
+}

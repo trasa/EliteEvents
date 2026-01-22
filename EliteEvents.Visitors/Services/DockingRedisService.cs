@@ -5,51 +5,55 @@ namespace EliteEvents.Visitors.Services;
 public class DockingRedisService
 {
     private readonly ILogger<DockingRedisService> _logger;
-    private readonly IDatabase _redis;
+    private readonly IServer _redisServer;
+    private readonly IDatabase _redisDatabase;
     private static readonly TimeSpan Expiration = TimeSpan.FromDays(30);
 
     public DockingRedisService(ILogger<DockingRedisService> logger, IConnectionMultiplexer connection)
     {
         _logger = logger;
-        _redis = connection.GetDatabase();
+        // for KEYS, SCAN ...
+        _redisServer = connection.GetServer(connection.GetEndPoints().First());
+        // for everything else
+        _redisDatabase = connection.GetDatabase();
     }
 
     public async Task RecordFleetCarrierDockingAsync(string carrierId, DateTimeOffset utcTimestamp)
     {
         var today = utcTimestamp.ToString("yyyy-MM-dd");
         var carrierKey = $"carrier:{carrierId}:daily:{today}";
-        await _redis.StringIncrementAsync(carrierKey);
-        await _redis.KeyExpireAsync(carrierKey, Expiration);
+        await _redisDatabase.StringIncrementAsync(carrierKey);
+        await _redisDatabase.KeyExpireAsync(carrierKey, Expiration);
         // active days
         var carrierDaysKey = $"carrier:{carrierId}:days";
-        await _redis.SortedSetAddAsync(carrierDaysKey, today, utcTimestamp.ToUnixTimeSeconds());
-        await _redis.KeyExpireAsync(carrierDaysKey, Expiration);
+        await _redisDatabase.SortedSetAddAsync(carrierDaysKey, today, utcTimestamp.ToUnixTimeSeconds());
+        await _redisDatabase.KeyExpireAsync(carrierDaysKey, Expiration);
     }
 
     public async Task RecordStationDockingAsync(string systemName, string stationName, string stationType, DateTimeOffset utcTimestamp)
     {
         var stationKey = $"system:{systemName}:station:{stationName}";
-        await _redis.HashIncrementAsync(stationKey, "count");
-        await _redis.HashSetAsync(stationKey, "type", stationType);
-        await _redis.HashSetAsync(stationKey, "last_seen", utcTimestamp.ToUnixTimeSeconds());
-        await _redis.KeyExpireAsync(stationKey, Expiration);
+        await _redisDatabase.HashIncrementAsync(stationKey, "count");
+        await _redisDatabase.HashSetAsync(stationKey, "type", stationType);
+        await _redisDatabase.HashSetAsync(stationKey, "last_seen", utcTimestamp.ToUnixTimeSeconds());
+        await _redisDatabase.KeyExpireAsync(stationKey, Expiration);
 
         // add station to system's station index sorted by last visit
         var systemStationsKey = $"system:{systemName}:stations";
-        await _redis.SortedSetAddAsync(systemStationsKey, stationName, utcTimestamp.ToUnixTimeSeconds());
-        await _redis.KeyExpireAsync(systemStationsKey, Expiration);
+        await _redisDatabase.SortedSetAddAsync(systemStationsKey, stationName, utcTimestamp.ToUnixTimeSeconds());
+        await _redisDatabase.KeyExpireAsync(systemStationsKey, Expiration);
     }
 
 
     public async Task<List<StationDockingInfo>> GetSystemDockingAsync(string systemName)
     {
         var systemStationKey = $"system:{systemName}:stations";
-        var stationNames = await _redis.SortedSetRangeByScoreAsync(systemStationKey, order: Order.Descending);
+        var stationNames = await _redisDatabase.SortedSetRangeByScoreAsync(systemStationKey, order: Order.Descending);
         var result = new List<StationDockingInfo>();
         foreach (var stationName in stationNames)
         {
             var stationKey = $"system:{systemName}:station:{stationName}";
-            var stationData = await _redis.HashGetAllAsync(stationKey);
+            var stationData = await _redisDatabase.HashGetAllAsync(stationKey);
             if (stationData.Length == 0)
             {
                 continue;
@@ -73,13 +77,13 @@ public class DockingRedisService
     public async Task<List<CarrierDockingInfo>> GetCarrierDockingAsync(string carrierId, int daysBack = 30)
     {
         var carrierDaysKey = $"carrier:{carrierId}:days";
-        var activeDays = await _redis.SortedSetRangeByScoreAsync(carrierDaysKey, order: Order.Descending, take: daysBack);
+        var activeDays = await _redisDatabase.SortedSetRangeByScoreAsync(carrierDaysKey, order: Order.Descending, take: daysBack);
         var result = new List<CarrierDockingInfo>();
         foreach (var day in activeDays)
         {
             var dayStr = day.ToString();
             var carrierKey = $"carrier:{carrierId}:daily:{dayStr}";
-            var dockingCount = await _redis.StringGetAsync(carrierKey);
+            var dockingCount = await _redisDatabase.StringGetAsync(carrierKey);
             if (dockingCount.HasValue)
             {
 
@@ -94,6 +98,26 @@ public class DockingRedisService
         }
 
         return result;
+    }
+
+    public async Task<List<string>> GetMatchingCarriersAsync(string searchQuery)
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery)) {
+            return [];
+        }
+
+        var normalizedQuery = searchQuery.ToUpperInvariant().Trim();
+        var matchingCarriers = new HashSet<string>();
+
+        await foreach (var key in _redisServer.KeysAsync(pattern: $"carrier:*{normalizedQuery}*"))
+        {
+            var parts = key.ToString().Split(':');
+            if (parts.Length > 1)
+            {
+                matchingCarriers.Add(parts[1]);
+            }
+        }
+        return matchingCarriers.OrderBy(id => id).ToList();
     }
 }
 
