@@ -1,15 +1,84 @@
-html, body {
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+@font-face {
+    font-family: 'CustomHeading';
+    src: url('fonts/EUROCAPS.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'CustomBody';
+    src: url('fonts/Sintony-Regular.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+:root {
+    --dark-bg: #1a1a1a;
+    --darker-bg: #0f0f0f;
+    --card-bg: #252525;
+    --border-color: #333333;
+    --primary-orange: #ff8c00;
+    --primary-orange-hover: #ffa500;
+    --text-light: #e0e0e0;
+    --text-muted: #999999;
+    --heading-font: 'CustomHeading';
+    --body-font: 'CustomBody';
+}
+
+body {
+    background-color: var(--darker-bg) !important;
+    color: var(--text-light) !important;
+    font-family: var(--body-font) !important;
+}
+
+h1, .h1, h2, .h2 {
+    font-family: var(--heading-font) !important;
+    color: var(--primary-orange) !important;
+}
+
+h3, h4, h5, h6,
+.h3, .h4, .h5, .h6 {
+    font-family: var(--heading-font) !important;
+    color: var(--text-light) !important;
+}
+
+.top-row {
+    background-color: var(--dark-bg) !important;
+    font-family: var(--heading-font) !important;
 }
 
 a, .btn-link {
     color: #006bb7;
 }
 
+/* Override Bootstrap primary color to orange */
 .btn-primary {
-    color: #fff;
-    background-color: #1b6ec2;
-    border-color: #1861ac;
+    background-color: var(--primary-orange) !important;
+    border-color: var(--primary-orange) !important;
+    color: #ffffff !important;
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+    background-color: var(--primary-orange-hover) !important;
+    border-color: var(--primary-orange-hover) !important;
+}
+
+.btn-outline-primary {
+    color: var(--primary-orange) !important;
+    border-color: var(--primary-orange) !important;
+}
+
+.btn-outline-primary:hover {
+    background-color: var(--primary-orange) !important;
+    border-color: var(--primary-orange) !important;
+    color: #ffffff !important;
+}
+
+.nav-link {
+    font-family: var(--heading-font) !important;
 }
 
 .btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
@@ -42,9 +111,9 @@ h1:focus {
     color: white;
 }
 
-    .blazor-error-boundary::after {
-        content: "An error has occurred."
-    }
+.blazor-error-boundary::after {
+    content: "An error has occurred."
+}
 
 .darker-border-checkbox.form-check-input {
     border-color: #929292;
@@ -57,4 +126,219 @@ h1:focus {
 
 .form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
     text-align: start;
+}
+
+/* Cards and panels */
+.card {
+    background-color: var(--card-bg) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-light) !important;
+}
+
+.card-header {
+    background-color: var(--dark-bg) !important;
+    border-bottom-color: var(--border-color) !important;
+    color: var(--text-light) !important;
+}
+
+.card-footer {
+    background-color: var(--dark-bg) !important;
+    border-top-color: var(--border-color) !important;
+}
+
+/* Forms */
+.form-control,
+.form-select {
+    background-color: var(--card-bg) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-light) !important;
+}
+
+.form-control:focus,
+.form-select:focus {
+    background-color: var(--card-bg) !important;
+    border-color: var(--primary-orange) !important;
+    color: var(--text-light) !important;
+    box-shadow: 0 0 0 0.2rem rgba(255, 140, 0, 0.25) !important;
+}
+
+.form-control::placeholder {
+    color: var(--text-muted) !important;
+}
+
+.form-label {
+    color: var(--text-light) !important;
+}
+
+/* Tables */
+.table {
+    color: var(--text-light) !important;
+}
+
+.table-dark {
+    background-color: var(--card-bg) !important;
+    border-color: var(--border-color) !important;
+}
+
+.table-striped tbody tr:nth-of-type(odd) {
+    background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.table-hover tbody tr:hover {
+    background-color: rgba(255, 140, 0, 0.1) !important;
+}
+
+thead th {
+    border-bottom: 2px solid var(--border-color) !important;
+}
+
+/* Navigation */
+.navbar {
+    background-color: var(--dark-bg) !important;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.navbar-dark .navbar-nav .nav-link {
+    color: var(--text-light) !important;
+}
+
+.navbar-dark .navbar-nav .nav-link:hover {
+    color: var(--primary-orange) !important;
+}
+
+.nav-tabs {
+    border-bottom-color: var(--border-color) !important;
+}
+
+.nav-tabs .nav-link {
+    color: var(--text-light) !important;
+    border-color: transparent !important;
+}
+
+.nav-tabs .nav-link:hover {
+    border-color: var(--border-color) var(--border-color) transparent !important;
+    color: var(--primary-orange) !important;
+}
+
+.nav-tabs .nav-link.active {
+    background-color: var(--card-bg) !important;
+    border-color: var(--border-color) var(--border-color) var(--card-bg) !important;
+    color: var(--primary-orange) !important;
+}
+
+/* Badges and pills */
+.badge-primary,
+.badge.bg-primary {
+    background-color: var(--primary-orange) !important;
+}
+
+/* Alerts */
+.alert-primary {
+    background-color: rgba(255, 140, 0, 0.2) !important;
+    border-color: var(--primary-orange) !important;
+    color: var(--text-light) !important;
+}
+
+/* Modal */
+.modal-content {
+    background-color: var(--card-bg) !important;
+    border-color: var(--border-color) !important;
+}
+
+.modal-header {
+    border-bottom-color: var(--border-color) !important;
+}
+
+.modal-footer {
+    border-top-color: var(--border-color) !important;
+}
+
+/* Dropdown */
+.dropdown-menu {
+    background-color: var(--card-bg) !important;
+    border-color: var(--border-color) !important;
+}
+
+.dropdown-item {
+    color: var(--text-light) !important;
+}
+
+.dropdown-item:hover,
+.dropdown-item:focus {
+    background-color: rgba(255, 140, 0, 0.2) !important;
+    color: var(--text-light) !important;
+}
+
+/* Links */
+a {
+    color: var(--primary-orange) !important;
+}
+
+a:hover {
+    color: var(--primary-orange-hover) !important;
+}
+
+/* List groups */
+.list-group-item {
+    background-color: var(--card-bg) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-light) !important;
+}
+
+.list-group-item:hover {
+    background-color: rgba(255, 140, 0, 0.1) !important;
+}
+
+/* Pagination */
+.pagination .page-link {
+    background-color: var(--card-bg) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-light) !important;
+}
+
+.pagination .page-link:hover {
+    background-color: var(--primary-orange) !important;
+    border-color: var(--primary-orange) !important;
+    color: #ffffff !important;
+}
+
+.pagination .page-item.active .page-link {
+    background-color: var(--primary-orange) !important;
+    border-color: var(--primary-orange) !important;
+}
+
+/* Breadcrumb */
+.breadcrumb {
+    background-color: var(--card-bg) !important;
+}
+
+.breadcrumb-item a {
+    color: var(--primary-orange) !important;
+}
+
+/* Progress bars */
+.progress {
+    background-color: var(--dark-bg) !important;
+}
+
+.progress-bar {
+    background-color: var(--primary-orange) !important;
+}
+
+/* Scrollbar (Webkit browsers) */
+::-webkit-scrollbar {
+    width: 12px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--darker-bg);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--primary-orange);
 }
