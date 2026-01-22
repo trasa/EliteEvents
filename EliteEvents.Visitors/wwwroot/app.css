@@ -33,6 +33,10 @@ body {
     font-family: var(--body-font) !important;
 }
 
+.text-muted {
+    color: var(--text-muted) !important;
+}
+
 h1, .h1, h2, .h2 {
     font-family: var(--heading-font) !important;
     color: var(--primary-orange) !important;
@@ -173,6 +177,7 @@ h1:focus {
 /* Tables */
 .table {
     color: var(--text-light) !important;
+    background-color: var(--dark-bg) !important;
 }
 
 .table-dark {
