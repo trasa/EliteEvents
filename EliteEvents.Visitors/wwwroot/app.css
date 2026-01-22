@@ -195,7 +195,6 @@ thead th {
 /* Navigation */
 .navbar {
     background-color: var(--dark-bg) !important;
-    border-bottom: 1px solid var(--border-color);
 }
 
 .navbar-dark .navbar-nav .nav-link {
