@@ -51,7 +51,7 @@ public class JournalMessageHandler : IJournalMessageHandler
             stationName = "Unknown";
         }
 
-        _logger.LogInformation("Handled Docked event at {System} -- {StationName} -- ({StationType})",
+        _logger.LogDebug("Handled Docked event at {System} -- {StationName} -- ({StationType})",
             journal.Message.StarSystem, stationName, stationType);
 
         if (stationType.ToString() == "FleetCarrier")
@@ -60,7 +60,7 @@ public class JournalMessageHandler : IJournalMessageHandler
         }
         else
         {
-            await _dockingService.RecordStationDockingAsync(journal.Message.StarSystem, stationName?.ToString() ?? "Unknown", stationType?.ToString() ?? "Unknown", ts);
+            await _dockingService.RecordStationDockingAsync(journal.Message.StarSystem, stationName?.ToString() ?? "Unknown", stationType.ToString() ?? "Unknown", ts);
         }
     }
 }

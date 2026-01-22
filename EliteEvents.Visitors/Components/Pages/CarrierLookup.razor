@@ -13,7 +13,7 @@
             <div class="input-group mb-3">
                 <input type="text"
                        class="form-control"
-                       placeholder="Enter carrier ID"
+                       placeholder="Enter carrier ID (ex. MFV-99Z)"
                        @bind="carrierName"
                        @onkeydown="HandleKeyDown" />
                 <button class="btn btn-primary"
@@ -53,7 +53,7 @@
         {
             <div class="card">
                 <div class="card-header">
-                    <h4 class="mb-0">@searchedCarrier</h4>
+                    <h4 class="mb-0"><a href="https://inara.cz/elite/station/?search=@searchedCarrier" target="_blank">@searchedCarrier</a></h4>
                     <small class="text-muted">@carrierInfo.Count day(s) found for docking</small>
                 </div>
                 <div class="card-body">
@@ -115,7 +115,7 @@
 
         try
         {
-            searchedCarrier = carrierName.Trim();
+            searchedCarrier = carrierName.ToUpperInvariant().Trim();
             carrierInfo = await DockingService.GetCarrierDockingAsync(searchedCarrier);
             searchPerformed = true;
         }
