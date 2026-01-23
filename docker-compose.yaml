@@ -15,7 +15,9 @@ services:
   visitors:
     image: trasa/elite-visitors:latest
     ports:
-        - "8080:8080"
+      - target: 8080
+        published: 8080
+        mode: host
     secrets:
       - redis-auth
     environment:
@@ -23,8 +25,10 @@ services:
       - ASPNETCORE_URLS=http://+:8080
       - REDIS_AUTH_FILE=/run/secrets/redis-auth
       - ConnectionStrings__redis-Production=rediss://default:@private-elite-visitors-redis-do-user-18343723-0.d.db.ondigitalocean.com:25061
-    extra_hosts:
-      - "private-elite-visitors-redis-do-user-18343723-0.d.db.ondigitalocean.com:10.124.16.2"
+    deploy:
+      mode: global
+      endpoint_mode: dnsrr
+    network_mode: host
 
 volumes:
     caddy-data:
