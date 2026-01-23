@@ -35,10 +35,11 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 {
     var environment = builder.Configuration.GetValue<string>("Environment")?.ToLower() ?? "local";
     var config = builder.Configuration.GetConnectionString($"redis-{environment}") ?? "localhost:6379";
-    if (File.Exists("/run/secrets/redis-auth"))
+    var passwordFile = Environment.GetEnvironmentVariable("REDIS_AUTH_FILE");
+    if (File.Exists(passwordFile))
     {
-        var password = File.ReadAllText("/run/secrets/redis-auth").Trim();
-        config = config.Replace("{{password}}", password);
+        var password = File.ReadAllText(passwordFile).Trim();
+        config = config.Replace("default@", $"default:{password}@");
     }
     return ConnectionMultiplexer.Connect(config);
 });
