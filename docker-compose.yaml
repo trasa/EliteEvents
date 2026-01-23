@@ -15,16 +15,15 @@ services:
       - visitors
 
   visitors:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: elite-visitors
-    expose:
-      - "8080"
+    image: trasa/elite-visitors:latest
+    ports:
+        - "8080:8080"
+    secrets:
+      - redis-auth
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
-      - ConnectionStrings__redis-Production=your-managed-redis-host:25061
+      - ConnectionStrings__redis-Production=rediss://default:{{password}}@private-elite-visitors-redis-do-user-18343723-0.d.db.ondigitalocean.com:25061
     restart: unless-stopped
 
 volumes:
@@ -32,3 +31,7 @@ volumes:
       driver: local
     caddy-config:
       driver: local
+
+secrets:
+  redis-auth:
+    external: true

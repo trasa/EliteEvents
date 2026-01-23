@@ -1,4 +1,4 @@
-elite-visitors.meancat.com {
+elite-events.meancat.com {
     reverse_proxy visitors:8080
 
     encode gzip
@@ -17,6 +17,6 @@ elite-visitors.meancat.com {
 }
 
 # Redirect www to non-www (optional)
-www.elite-visitors.meancat.com {
-    redir https://elite-visitors.meancat.com{uri} permanent
+www.elite-events.meancat.com {
+    redir https://elite-events.meancat.com{uri} permanent
 }

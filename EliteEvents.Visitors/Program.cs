@@ -38,7 +38,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     if (File.Exists("/run/secrets/redis-auth"))
     {
         var password = File.ReadAllText("/run/secrets/redis-auth").Trim();
-        config = $"{config},password={password}";
+        config = config.Replace("{{password}}", password);
     }
     return ConnectionMultiplexer.Connect(config);
 });

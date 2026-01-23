@@ -15,11 +15,4 @@
     <ItemGroup>
         <ProjectReference Include="../EliteEvents.Eddn/EliteEvents.Eddn.csproj" />
     </ItemGroup>
-    <ItemGroup>
-      <Folder Include="wwwroot\fonts\" />
-    </ItemGroup>
-    <ItemGroup>
-      <_ContentIncludedByDefault Remove="Components\Pages\Carriers\CarrierDetails.razor" />
-      <_ContentIncludedByDefault Remove="Components\Pages\Carriers\CarrierSearch.razor" />
-    </ItemGroup>
 </Project>
