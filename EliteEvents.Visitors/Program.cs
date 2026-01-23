@@ -39,7 +39,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     if (File.Exists(passwordFile))
     {
         var password = File.ReadAllText(passwordFile).Trim();
-        config = config.Replace("default@", $"default@{password}");
+        config = config.Replace("default:", $"default:{password}");
     }
     Console.WriteLine($"Config: {config}");
     return ConnectionMultiplexer.Connect(config);

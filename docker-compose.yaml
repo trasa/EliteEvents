@@ -22,7 +22,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
       - REDIS_AUTH_FILE=/run/secrets/redis-auth
-      - ConnectionStrings__redis-Production=rediss://default@:private-elite-visitors-redis-do-user-18343723-0.d.db.ondigitalocean.com:25061
+      - ConnectionStrings__redis-Production=rediss://default:@private-elite-visitors-redis-do-user-18343723-0.d.db.ondigitalocean.com:25061
     extra_hosts:
       - "private-elite-visitors-redis-do-user-18343723-0.d.db.ondigitalocean.com:10.124.16.2"
 
