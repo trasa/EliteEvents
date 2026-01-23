@@ -1,0 +1,33 @@
+name: Deploy to elite-visitors.meancat.com
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [ubuntu-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: deploy files
+        uses: appleboy/scp-action@v0.1.3
+        with:
+            host: elite-visitors.meancat.com
+            username: deploy
+            key: ${{ secrets.DO_DEPLOY_PRIVATE_KEY }}
+            source: "./docker-compose.yaml,./Caddyfile,./deploy-stack"
+            target: /home/deploy
+
+      - name: update stack on remote
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          VERSION: ${{ env.VERSION }}
+          DEPLOY_USERNAME: deploy
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        with:
+          envs: DEPLOY_USERNAME,DOCKER_USERNAME
+          host: elite-visitors.meancat.com
+          username: deploy
+          key: ${{ secrets.DO_DEPLOY_PRIVATE_KEY }}
+          script_path: ./deploy-stack
