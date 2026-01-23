@@ -41,6 +41,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
         var password = File.ReadAllText(passwordFile).Trim();
         config = config.Replace("default@", $"default@{password}");
     }
+    Console.WriteLine($"Config: {config}");
     return ConnectionMultiplexer.Connect(config);
 });
 builder.Services.AddSingleton<DockingRedisService>();
