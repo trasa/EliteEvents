@@ -8,4 +8,4 @@ echo "Deploying latest image"
 docker stack deploy --detach=true -c docker-compose.yaml elite-visitors
 
 echo "Forcing update of stack"
-docker service update --force elite-visitors_elite-visitors
+docker service update --force elite-visitors_visitors
