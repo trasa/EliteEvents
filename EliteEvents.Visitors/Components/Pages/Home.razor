@@ -1,5 +1,150 @@
 ﻿@page "/"
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Elite Dangerous Visitor Analytics</PageTitle>
 
-<h1>Elite: Dangerous Docking Database</h1>
+<div class="container mt-5">
+    <div class="text-center mb-5">
+        <h1 class="display-4 mb-3">Elite Dangerous Visitor Analytics</h1>
+        <p class="lead text-muted">
+            Track and analyze docking activity across the galaxy
+        </p>
+    </div>
+
+    <div class="row g-4 mb-5">
+        <div class="col-md-6">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <i class="bi bi-search fs-2 text-primary me-3"></i>
+                        <h3 class="card-title mb-0">System Search</h3>
+                    </div>
+                    <p class="card-text">
+                        Search for star systems and view docking statistics for stations within them.
+                        See how frequently stations that you've created are visited by commanders across the galaxy.
+                    </p>
+                    <a href="/system-search" class="btn btn-primary">
+                        Search Systems
+                        <i class="bi bi-arrow-right ms-2"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <i class="bi bi-truck fs-2 text-primary me-3"></i>
+                        <h3 class="card-title mb-0">Fleet Carrier Search</h3>
+                    </div>
+                    <p class="card-text">
+                        Look up individual fleet carriers by their ID and track their visitor history over time.
+                        View day-by-day docking counts of visitors to your carrier.
+                    </p>
+                    <a href="/carrier-search" class="btn btn-primary">
+                        Search Carriers
+                        <i class="bi bi-arrow-right ms-2"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-5">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h3 class="card-title mb-4">
+                        <i class="bi bi-info-circle text-primary me-2"></i>
+                        About This Site
+                    </h3>
+                    <p>
+                        This analytics platform tracks commander docking events throughout the Elite Dangerous galaxy
+                        via the <a href="https://eddn-realtime.space/">Elite: Dangerous Data Network</a> (EDDN).
+                        Data is stored in a Redis database for 30 days since last update. Systems and fleet carriers
+                        without updates for 30 days from EDDN are automatically purged to conserve storage.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <div class="card bg-light">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">
+                        <i class="bi bi-award me-2"></i>
+                        Credits
+                    </h5>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6 class="text-muted mb-2">UI Framework</h6>
+                            <ul class="list-unstyled small">
+                                <li>
+                                    <a href="https://getbootstrap.com/" target="_blank" class="text-decoration-none">
+                                        Bootstrap 5
+                                        <i class="bi bi-box-arrow-up-right small"></i>
+                                    </a>
+                                    - CSS Framework
+                                </li>
+                                <li>
+                                    <a href="https://edassets.org/" target="_blank" class="text-decoration-none">
+                                        Elite Dangerous Assets
+                                        <i class="bi bi-box-arrow-up-right small"></i>
+                                    </a>
+                                    - Fonts and Images
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted mb-2">Technology</h6>
+                            <ul class="list-unstyled small">
+                                <li>ASP.NET Core Blazor - Web Framework</li>
+                                <li>Redis - Data Storage</li>
+                                <li>ZeroMQ - Message Bus</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-12">
+                            <h6 class="text-muted mb-2">External Resources</h6>
+                            <ul class="list-unstyled small">
+                                <li>
+                                    <a href="https://inara.cz/" target="_blank" class="text-decoration-none">
+                                        Inara
+                                        <i class="bi bi-box-arrow-up-right small"></i>
+                                    </a>
+                                    - Elite Dangerous Database & Community
+                                </li>
+                                <li>
+                                    <a href="https://github.com/EDCD/EDDN" target="_blank" class="text-decoration-none">
+                                        Elite Dangerous Data Network (EDDN)
+                                        <i class="bi bi-box-arrow-up-right small"></i>
+                                    </a>
+                                    - Realtime Data Feed
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                    <hr class="my-3">
+                    <p class="small text-muted mb-0">
+                        <i class="bi bi-code-slash me-1"></i>
+                        &copy; 2026 - <a href="https://www.linkedin.com/in/tonyrasa/">Tony Rasa</a>.
+                        Not run by or affiliated in any way with <a href="http://www.frontier.co.uk/">Frontier Developments plc</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .card {
+        transition: transform 0.2s ease-in-out;
+    }
+
+    .card:hover {
+        transform: translateY(-5px);
+    }
+</style>
