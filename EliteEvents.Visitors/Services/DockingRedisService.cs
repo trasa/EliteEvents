@@ -4,14 +4,12 @@ namespace EliteEvents.Visitors.Services;
 
 public class DockingRedisService
 {
-    private readonly ILogger<DockingRedisService> _logger;
     private readonly IServer _redisServer;
     private readonly IDatabase _redisDatabase;
     private static readonly TimeSpan Expiration = TimeSpan.FromDays(30);
 
-    public DockingRedisService(ILogger<DockingRedisService> logger, IConnectionMultiplexer connection)
+    public DockingRedisService(IConnectionMultiplexer connection)
     {
-        _logger = logger;
         // for KEYS, SCAN ...
         _redisServer = connection.GetServer(connection.GetEndPoints().First());
         // for everything else
@@ -118,6 +116,27 @@ public class DockingRedisService
             }
         }
         return matchingCarriers.OrderBy(id => id).ToList();
+    }
+
+    public async Task<List<string>> GetMatchingSystemsAsync(string searchQuery)
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery))
+            return [];
+
+        var normalizedQuery = searchQuery.Trim();
+        var matchingSystems = new HashSet<string>();
+
+        // Get all system keys from Redis
+        await foreach (var key in _redisServer.KeysAsync(pattern: $"system:*{normalizedQuery}*"))
+        {
+            var parts = key.ToString().Split(":");
+            if (parts.Length > 1)
+            {
+                matchingSystems.Add(parts[1]);
+            }
+        }
+
+        return matchingSystems.OrderBy(id => id).ToList();
     }
 }
 
