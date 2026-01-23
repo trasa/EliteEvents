@@ -15,7 +15,7 @@
         <PackageReference Include="Newtonsoft.Json" Version="$(NewtonsoftJsonVersion)" />
     </ItemGroup>
     
-    <Target Name="NSwag" BeforeTargets="CoreCompile">
+    <Target Name="NSwag" BeforeTargets="CoreCompile" Condition="'$(Configuration)' == 'Debug'">
         <Exec WorkingDirectory="$(ProjectDir)" Command="dotnet nswag jsonschema2csclient /name:JournalMessage /namespace:EliteEvents.Eddn.Journal /input:https://eddn.edcd.io/schemas/journal/1 /output:Generated/Journal.g.cs " />
         <Exec WorkingDirectory="$(ProjectDir)" Command="dotnet nswag jsonschema2csclient /name:ApproachSettlementMessage /namespace:EliteEvents.Eddn.ApproachSettlement /input:https://eddn.edcd.io/schemas/approachsettlement/1 /output:Generated/ApproachSettlement.g.cs " />
         <ReplaceIntWithLong Files="$(ProjectDir)Generated/ApproachSettlement.g.cs;$(ProjectDir)Generated/Journal.g.cs" />

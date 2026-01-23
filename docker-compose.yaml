@@ -1,0 +1,34 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: elite-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+        - ./Caddyfile:/etc/caddy/Caddyfile
+        - caddy-data:/data
+        - caddy-config:/config
+    restart: unless-stopped
+    depends_on:
+      - visitors
+
+  visitors:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: elite-visitors
+    expose:
+      - "8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__redis-Production=your-managed-redis-host:25061
+    restart: unless-stopped
+
+volumes:
+    caddy-data:
+      driver: local
+    caddy-config:
+      driver: local

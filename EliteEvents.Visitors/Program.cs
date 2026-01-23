@@ -16,7 +16,6 @@ if (builder.Environment.IsDevelopment())
     var localUser = Path.Combine(Directory.GetCurrentDirectory(), "appsettings.LocalUser.json");
     builder.Configuration.AddJsonFile(localUser, optional: true, reloadOnChange: true);
 }
-
 builder.Configuration.AddEnvironmentVariables();
 
 // Configuration / IOptions

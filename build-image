@@ -1,0 +1,5 @@
+#!/bin/bash
+set -e
+# build for x86_64 instead
+docker buildx build --platform linux/amd64 -t trasa/elite-visitors:latest .
+
