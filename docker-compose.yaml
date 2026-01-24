@@ -13,10 +13,6 @@ services:
   visitors:
     image: trasa/elite-visitors:latest
     network_mode: host
-    ports:
-      - target: 8080
-        published: 8080
-        mode: host
     secrets:
       - redis-auth
     environment:

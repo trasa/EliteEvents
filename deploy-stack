@@ -5,4 +5,4 @@ echo "Pulling latest image"
 docker pull $DOCKER_USERNAME/elite-visitors:latest
 
 echo "Deploying latest image"
-docker-compose up -d
+docker compose up -d
