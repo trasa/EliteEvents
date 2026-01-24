@@ -1,4 +1,14 @@
+{
+    servers {
+        listener_wrappers {
+            https_redirect
+            tls
+        }
+    }
+}
+
 elite-visitors.meancat.com {
+    bind 0.0.0.0
     reverse_proxy 127.0.0.1:8080
 
     encode gzip
