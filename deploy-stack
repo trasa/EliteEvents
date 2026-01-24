@@ -5,7 +5,4 @@ echo "Pulling latest image"
 docker pull $DOCKER_USERNAME/elite-visitors:latest
 
 echo "Deploying latest image"
-docker stack deploy --detach=true -c docker-compose.yaml elite-visitors
-
-echo "Forcing update of stack"
-docker service update --force elite-visitors_visitors
+docker-compose up -d

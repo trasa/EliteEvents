@@ -1,19 +1,18 @@
+version: '3.8'
+
 services:
   caddy:
-    image: caddy:2-alpine
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+    image: caddy:latest
+    network_mode: host
     volumes:
         - ./Caddyfile:/etc/caddy/Caddyfile
-        - caddy-data:/data
-        - caddy-config:/config
-    depends_on:
-      - visitors
+        - caddy_data:/data
+        - caddy_config:/config
+    restart: unless-stopped
 
   visitors:
     image: trasa/elite-visitors:latest
+    network_mode: host
     ports:
       - target: 8080
         published: 8080
@@ -25,17 +24,13 @@ services:
       - ASPNETCORE_URLS=http://+:8080
       - REDIS_AUTH_FILE=/run/secrets/redis-auth
       - ConnectionStrings__redis-Production=rediss://default:@private-elite-visitors-redis-do-user-18343723-0.d.db.ondigitalocean.com:25061
-    deploy:
-      mode: global
-      endpoint_mode: dnsrr
-    network_mode: host
+    restart: unless-stopped
+
 
 volumes:
-    caddy-data:
-      driver: local
-    caddy-config:
-      driver: local
+    caddy_data:
+    caddy_config:
 
 secrets:
   redis-auth:
-    external: true
+    file: /home/deploy/redis-auth-secret
