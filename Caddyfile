@@ -15,8 +15,3 @@ elite-visitors.meancat.com {
         output file /var/log/caddy/access.log
     }
 }
-
-# Redirect www to non-www (optional)
-www.elite-visitors.meancat.com {
-    redir https://elite-visitors.meancat.com{uri} permanent
-}
