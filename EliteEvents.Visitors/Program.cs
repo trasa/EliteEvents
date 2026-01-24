@@ -31,7 +31,7 @@ builder.Services
     .AddHostedService<EddnStreamReceiver>();
 
 // redis
-builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
+builder.Services.AddSingleton<IConnectionMultiplexer>(async _ =>
 {
     var environment = builder.Configuration.GetValue<string>("Environment")?.ToLower() ?? "local";
     var config = builder.Configuration.GetConnectionString($"redis-{environment}") ?? "localhost:6379";
@@ -42,7 +42,9 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
         config = config.Replace("default:", $"default:{password}");
     }
     Console.WriteLine($"Config: {config}");
-    return ConnectionMultiplexer.Connect(config);
+    var options = ConfigurationOptions.Parse(config);
+    options.AbortOnConnectFail = false;
+    await ConnectionMultiplexer.ConnectAsync(options, Console.Out);
 });
 builder.Services.AddSingleton<DockingRedisService>();
 
