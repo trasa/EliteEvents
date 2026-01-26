@@ -18,6 +18,7 @@ public class DockingRedisService
 
     public async Task RecordFleetCarrierDockingAsync(string carrierId, DateTimeOffset utcTimestamp)
     {
+        carrierId = carrierId.ToUpperInvariant();
         var today = utcTimestamp.ToString("yyyy-MM-dd");
         var carrierKey = $"carrier:{carrierId}:daily:{today}";
         await _redisDatabase.StringIncrementAsync(carrierKey);
@@ -30,6 +31,7 @@ public class DockingRedisService
 
     public async Task RecordStationDockingAsync(string systemName, string stationName, string stationType, DateTimeOffset utcTimestamp)
     {
+        systemName = systemName.ToUpperInvariant();
         var stationKey = $"system:{systemName}:station:{stationName}";
         await _redisDatabase.HashIncrementAsync(stationKey, "count");
         await _redisDatabase.HashSetAsync(stationKey, "type", stationType);
@@ -45,6 +47,7 @@ public class DockingRedisService
 
     public async Task<List<StationDockingInfo>> GetSystemDockingAsync(string systemName)
     {
+        systemName = systemName.ToUpperInvariant();
         var systemStationKey = $"system:{systemName}:stations";
         var stationNames = await _redisDatabase.SortedSetRangeByScoreAsync(systemStationKey, order: Order.Descending);
         var result = new List<StationDockingInfo>();
@@ -74,6 +77,7 @@ public class DockingRedisService
 
     public async Task<List<CarrierDockingInfo>> GetCarrierDockingAsync(string carrierId, int daysBack = 30)
     {
+        carrierId = carrierId.ToUpperInvariant();
         var carrierDaysKey = $"carrier:{carrierId}:days";
         var activeDays = await _redisDatabase.SortedSetRangeByScoreAsync(carrierDaysKey, order: Order.Descending, take: daysBack);
         var result = new List<CarrierDockingInfo>();
@@ -123,7 +127,7 @@ public class DockingRedisService
         if (string.IsNullOrWhiteSpace(searchQuery))
             return [];
 
-        var normalizedQuery = searchQuery.Trim();
+        var normalizedQuery = searchQuery.ToUpperInvariant().Trim();
         var matchingSystems = new HashSet<string>();
 
         // Get all system keys from Redis
