@@ -15,11 +15,10 @@
                 <input type="text"
                        class="form-control"
                    placeholder="Enter system name or partial match (ex. Sol or Colonia)"
-                   @bind="searchQuery"
-                   @onkeydown="HandleKeyDown" />
+                   @bind="searchQuery" />
                 <button class="btn btn-primary"
                     @onclick="SearchSystems"
-                    disabled="@(string.IsNullOrWhiteSpace(searchQuery) || isLoading)">
+                    disabled="@(isLoading)">
                     @if (isLoading)
                     {
                         <span class="spinner-border spinner-border-sm me-2" role="status"></span>
@@ -32,7 +31,7 @@
                 </button>
             </div>
             <small class="text-muted">
-                Enter full system name or partial match to find systems with docking data
+                Enter at least 3 characters to search for systems with docking data
             </small>
         </div>
     </div>
@@ -95,8 +94,11 @@
 
     private async Task SearchSystems()
     {
-        if (string.IsNullOrWhiteSpace(searchQuery))
+        if (string.IsNullOrWhiteSpace(searchQuery) || searchQuery.Trim().Length < 3)
+        {
+            errorMessage = "Please enter at least 3 characters to search.";
             return;
+        }
 
         isLoading = true;
         errorMessage = null;
@@ -118,14 +120,6 @@
         finally
         {
             isLoading = false;
-        }
-    }
-
-    private async Task HandleKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key == "Enter")
-        {
-            await SearchSystems();
         }
     }
 }
