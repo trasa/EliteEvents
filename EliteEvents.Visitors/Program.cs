@@ -46,7 +46,9 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     options.AbortOnConnectFail = false;
     return ConnectionMultiplexer.Connect(options, Console.Out);
 });
-builder.Services.AddSingleton<DockingRedisService>();
+builder.Services
+    .AddSingleton<DockingRedisService>()
+    .AddScoped<CachedSystemCount>();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()

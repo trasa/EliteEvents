@@ -1,5 +1,6 @@
 ﻿@page "/"
-
+@using EliteEvents.Visitors.Services
+@inject CachedSystemCount CachedSystemCount
 <PageTitle>Elite Dangerous Visitor Analytics</PageTitle>
 
 <div class="container mt-5">
@@ -21,6 +22,7 @@
                     <p class="card-text">
                         Search for star systems and view docking statistics for stations within them.
                         See how frequently stations that you've created are visited by commanders across the galaxy.
+                        (Known Systems: <strong>~ @systemCount</strong>)
                     </p>
                     <a href="/system-search" class="btn btn-primary">
                         Search Systems
@@ -148,3 +150,12 @@
         transform: translateY(-5px);
     }
 </style>
+
+@code {
+    private long systemCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        systemCount = await CachedSystemCount.GetSystemCountAsync();
+    }
+}

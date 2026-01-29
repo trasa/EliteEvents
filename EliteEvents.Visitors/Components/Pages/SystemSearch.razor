@@ -1,6 +1,7 @@
 @page "/system-search"
 @using EliteEvents.Visitors.Services
 @inject DockingRedisService DockingService
+@inject CachedSystemCount CachedSystemCount
 @inject NavigationManager Navigation
 @rendermode InteractiveServer
 
@@ -31,7 +32,7 @@
                 </button>
             </div>
             <small class="text-muted">
-                Enter at least 3 characters to search for systems with docking data
+                Enter at least 3 characters to search for systems with docking data. Known Systems: ~ @systemCount
             </small>
         </div>
     </div>
@@ -91,6 +92,12 @@
     private bool isLoading = false;
     private bool searchPerformed = false;
     private string? errorMessage;
+    private long systemCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        systemCount = await CachedSystemCount.GetSystemCountAsync();
+    }
 
     private async Task SearchSystems()
     {
