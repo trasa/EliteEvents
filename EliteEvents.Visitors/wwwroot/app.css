@@ -54,7 +54,7 @@ h3, h4, h5, h6,
 }
 
 a, .btn-link {
-    color: #006bb7;
+    color: var(--primary-orange);
 }
 
 /* Override Bootstrap primary color to orange */
@@ -83,6 +83,7 @@ a, .btn-link {
 
 .nav-link {
     font-family: var(--heading-font) !important;
+    color: var(--primary-orange) !important;
 }
 
 .btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
@@ -206,28 +207,8 @@ thead th {
     color: var(--text-light) !important;
 }
 
-.navbar-dark .navbar-nav .nav-link:hover {
-    color: var(--primary-orange) !important;
-}
-
 .nav-tabs {
     border-bottom-color: var(--border-color) !important;
-}
-
-.nav-tabs .nav-link {
-    color: var(--text-light) !important;
-    border-color: transparent !important;
-}
-
-.nav-tabs .nav-link:hover {
-    border-color: var(--border-color) var(--border-color) transparent !important;
-    color: var(--primary-orange) !important;
-}
-
-.nav-tabs .nav-link.active {
-    background-color: var(--card-bg) !important;
-    border-color: var(--border-color) var(--border-color) var(--card-bg) !important;
-    color: var(--primary-orange) !important;
 }
 
 /* Badges and pills */
@@ -271,15 +252,6 @@ thead th {
 .dropdown-item:focus {
     background-color: rgba(255, 140, 0, 0.2) !important;
     color: var(--text-light) !important;
-}
-
-/* Links */
-a {
-    color: var(--primary-orange) !important;
-}
-
-a:hover {
-    color: var(--primary-orange-hover) !important;
 }
 
 /* List groups */
