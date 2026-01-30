@@ -4,12 +4,14 @@ namespace EliteEvents.Visitors.Services;
 
 public class DockingRedisService
 {
+    private readonly WeeklyExpirationCalculator _weeklyExpirationCalculator;
     private readonly IServer _redisServer;
     private readonly IDatabase _redisDatabase;
     private static readonly TimeSpan Expiration = TimeSpan.FromDays(30);
 
-    public DockingRedisService(IConnectionMultiplexer connection)
+    public DockingRedisService(IConnectionMultiplexer connection, WeeklyExpirationCalculator weeklyExpirationCalculator)
     {
+        _weeklyExpirationCalculator = weeklyExpirationCalculator;
         // for KEYS, SCAN ...
         _redisServer = connection.GetServer(connection.GetEndPoints().First());
         // for everything else
@@ -42,6 +44,10 @@ public class DockingRedisService
         var systemStationsKey = $"system:{systemName}:stations";
         await _redisDatabase.SortedSetAddAsync(systemStationsKey, stationName, utcTimestamp.ToUnixTimeSeconds());
         await _redisDatabase.KeyExpireAsync(systemStationsKey, Expiration);
+
+        // system visit leaderboard (expires at 0730 UTC Thursday)
+        await _redisDatabase.SortedSetIncrementAsync("systems:visits", systemName, 1);
+        await _redisDatabase.KeyExpireAsync("systems:visits", _weeklyExpirationCalculator.GetNextExpirationUtc(DateTime.UtcNow));
     }
 
 
@@ -100,6 +106,22 @@ public class DockingRedisService
         }
 
         return result;
+    }
+
+    public async Task<List<SystemVisitInfo>> GetSystemVisitsAsync(int topN = 100)
+    {
+        var entries = await _redisDatabase.SortedSetRangeByRankWithScoresAsync(
+            "systems:visits",
+            start: 0,
+            stop: -1,
+            order: Order.Descending
+        );
+
+        return entries
+            .Where(entry => entry.Score > 1.0)
+            .Select(entry => new SystemVisitInfo(entry.Element.ToString(), (long)entry.Score))
+            .Take(topN)
+            .ToList();
     }
 
     public async Task<List<string>> GetMatchingCarriersAsync(string searchQuery)
@@ -167,4 +189,16 @@ public class CarrierDockingInfo
     {
         return $"Fleet Carrier {CarrierId} - {Date:yyyy-MM-dd} - {DockingCount}";
     }
+}
+
+public class SystemVisitInfo
+{
+    public SystemVisitInfo(string systemName, long visits)
+    {
+        SystemName = systemName;
+        VisitCount = visits;
+    }
+
+    public string SystemName { get; set; } = "";
+    public long VisitCount { get; set; }
 }

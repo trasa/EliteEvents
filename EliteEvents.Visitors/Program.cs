@@ -48,6 +48,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 });
 builder.Services
     .AddSingleton<DockingRedisService>()
+    .AddSingleton<WeeklyExpirationCalculator>()
     .AddScoped<CachedSystemCount>();
 
 // Add services to the container.

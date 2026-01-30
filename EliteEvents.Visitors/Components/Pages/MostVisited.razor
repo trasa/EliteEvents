@@ -1,0 +1,109 @@
+@page "/most-visited"
+@using EliteEvents.Visitors.Services
+@inject NavigationManager Navigation
+@inject DockingRedisService DockingService
+@rendermode InteractiveServer
+
+<PageTitle>Most-Visited Systems</PageTitle>
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Most-Visited Systems</h2>
+        <small class="text-muted">Reset every week at 07:30 Thursday (UTC), during system maintenance.</small>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-3">Loading results...</p>
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            @errorMessage
+            <button type="button" class="btn-close" @onclick="() => errorMessage = null"></button>
+        </div>
+    }
+    else if (systems != null)
+    {
+        @if (systems.Count == 0)
+        {
+            <div class="alert alert-info">
+                No docking data found! Try back later.
+            </div>
+        }
+        else
+        {
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h4 class="mb-0">
+                        Recently Visited Systems
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-dark table-hover">
+                            <thead>
+                                <tr>
+                                    <th>System Name</th>
+                                    <th class="text-end">Visits</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var system in systems.OrderByDescending(s => s.VisitCount))
+                                {
+                                    <tr>
+                                        <td>
+                                            <a href="https://inara.cz/elite/starsystem/?search=@Uri.EscapeDataString(system.SystemName)" target="_blank">
+                                                @system.SystemName
+                                                <i class="bi bi-box-arrow-up-right small"></i>
+                                            </a>
+                                        </td>
+                                        <td class="text-end">
+                                            <span class="badge bg-primary fs-6">@system.VisitCount</span>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+
+    private List<SystemVisitInfo>? systems;
+    private bool isLoading = true;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSystemData();
+    }
+
+    private async Task LoadSystemData()
+    {
+        isLoading = true;
+        errorMessage = null;
+        systems = null;
+
+        try
+        {
+            systems = await DockingService.GetSystemVisitsAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading system data: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}
