@@ -44,7 +44,11 @@ public class DockingRedisService
         var systemStationsKey = $"system:{systemName}:stations";
         await _redisDatabase.SortedSetAddAsync(systemStationsKey, stationName, utcTimestamp.ToUnixTimeSeconds());
         await _redisDatabase.KeyExpireAsync(systemStationsKey, Expiration);
+    }
 
+    public async Task RecordSystemVisitAsync(string systemName)
+    {
+        systemName = systemName.ToUpperInvariant();
         // system visit leaderboard (expires at 0730 UTC Thursday)
         await _redisDatabase.SortedSetIncrementAsync("systems:visits", systemName, 1);
         await _redisDatabase.KeyExpireAsync("systems:visits", _weeklyExpirationCalculator.GetNextExpirationUtc(DateTime.UtcNow));

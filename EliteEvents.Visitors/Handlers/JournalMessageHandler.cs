@@ -8,7 +8,7 @@ public class JournalMessageHandler : IJournalMessageHandler
     private readonly ILogger<JournalMessageHandler> _logger;
     private readonly DockingRedisService _dockingService;
 
-    public MessageEvent[] Handles => [MessageEvent.Docked];
+    public MessageEvent[] Handles => [MessageEvent.Docked, MessageEvent.FSDJump];
 
     public JournalMessageHandler(ILogger<JournalMessageHandler> logger, DockingRedisService dockingService)
     {
@@ -24,6 +24,7 @@ public class JournalMessageHandler : IJournalMessageHandler
                 await HandleDocked(message);
                 break;
             case MessageEvent.FSDJump:
+                await HandleFSDJump(message);
                 break;
             case MessageEvent.Scan:
                 break;
@@ -62,5 +63,11 @@ public class JournalMessageHandler : IJournalMessageHandler
         {
             await _dockingService.RecordStationDockingAsync(journal.Message.StarSystem, stationName?.ToString() ?? "Unknown", stationType.ToString() ?? "Unknown", ts);
         }
+    }
+
+    private async Task HandleFSDJump(JournalMessage journal)
+    {
+        _logger.LogDebug("Handled FSDJump event to {System}", journal.Message.StarSystem);
+        await _dockingService.RecordSystemVisitAsync(journal.Message.StarSystem);
     }
 }
