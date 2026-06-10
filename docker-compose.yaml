@@ -20,6 +20,23 @@ services:
       - ConnectionStrings__redis-Production=private-elite-visitors-redis-do-user-18343723-0.d.db.ondigitalocean.com:25061,abortConnect=false,ssl=true
     restart: unless-stopped
 
+  dashboard:
+    image: trasa/elite-dashboard:latest
+    network_mode: host
+    secrets:
+      - redis-auth
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Bind to loopback only; Caddy (host network) proxies elite.meancat.com here.
+      - HOSTNAME=127.0.0.1
+      # Same managed Redis the visitors app uses; password comes from the secret file.
+      - REDIS_HOST=private-elite-visitors-redis-do-user-18343723-0.d.db.ondigitalocean.com
+      - REDIS_PORT=25061
+      - REDIS_TLS=true
+      - REDIS_AUTH_FILE=/run/secrets/redis-auth
+    restart: unless-stopped
+
 volumes:
     caddy_data:
     caddy_config:

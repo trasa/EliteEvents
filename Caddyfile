@@ -17,5 +17,20 @@ elite-visitors.meancat.com {
     }
 }
 elite.meancat.com {
-    reverse_proxy eddn-dashboard:3000
+    bind 0.0.0.0
+    reverse_proxy 127.0.0.1:3000
+
+    encode gzip
+
+    header {
+        # Security headers
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+    }
 }
