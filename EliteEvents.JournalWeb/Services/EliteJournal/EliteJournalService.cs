@@ -1,9 +1,9 @@
+using EliteEvents.JournalWeb.Hubs;
 using EliteJournalReader;
 using EliteJournalReader.Events;
-using EliteEvents.Web.Hubs;
 using Microsoft.AspNetCore.SignalR;
 
-namespace EliteEvents.Web.Services.EliteJournal;
+namespace EliteEvents.JournalWeb.Services.EliteJournal;
 
 public class EliteJournalService : BackgroundService
 {

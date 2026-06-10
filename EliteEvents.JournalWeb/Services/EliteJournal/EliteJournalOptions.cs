@@ -1,4 +1,4 @@
-namespace EliteEvents.Web.Services.EliteJournal;
+namespace EliteEvents.JournalWeb.Services.EliteJournal;
 
 public class EliteJournalOptions
 {

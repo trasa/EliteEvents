@@ -1,8 +1,8 @@
 using EliteEvents.Eddn.Config;
 using EliteJournalReader;
-using EliteEvents.Web.Components;
-using EliteEvents.Web.Hubs;
-using EliteEvents.Web.Services.EliteJournal;
+using EliteEvents.JournalWeb.Components;
+using EliteEvents.JournalWeb.Hubs;
+using EliteEvents.JournalWeb.Services.EliteJournal;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);

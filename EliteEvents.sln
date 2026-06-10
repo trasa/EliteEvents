@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EliteEvents.Web", "EliteEvents.Web\EliteEvents.Web.csproj", "{5277C958-19D7-4991-97E0-E8FD3BE9318D}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EliteEvents.JournalWeb", "EliteEvents.JournalWeb\EliteEvents.JournalWeb.csproj", "{5277C958-19D7-4991-97E0-E8FD3BE9318D}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EliteEvents.Eddn", "EliteEvents.Eddn\EliteEvents.Eddn.csproj", "{021A7302-7D01-45D4-8F46-252D5FD0000B}"
 EndProject
