@@ -11,7 +11,7 @@
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.2" />
         <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.2" />
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" version="10.0.2" />
-        <PackageReference Include="NetMQ" Version="4.0.2.2" />
+        <PackageReference Include="NetMQ" Version="4.0.4.2" />
         <PackageReference Include="Newtonsoft.Json" Version="$(NewtonsoftJsonVersion)" />
     </ItemGroup>
     
