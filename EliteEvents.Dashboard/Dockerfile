@@ -15,10 +15,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-RUN addgroup -S nodejs && adduser -S nextjs -G nodejs
-COPY --from=build /app/public ./public
-COPY --from=build /app/.next/standalone ./
-COPY --from=build /app/.next/static ./.next/static
-USER nextjs
+# Run as the image's built-in `node` user (uid 1000). The Redis password secret
+# is mounted owned by uid 1000 / mode 0600 (the host `deploy` user), so matching
+# that uid lets us read it without loosening host file permissions — and compose
+# file-secrets ignore uid/gid/mode outside Swarm, so the uid has to match here.
+COPY --from=build --chown=node:node /app/public ./public
+COPY --from=build --chown=node:node /app/.next/standalone ./
+COPY --from=build --chown=node:node /app/.next/static ./.next/static
+USER node
 EXPOSE 3000
 CMD ["node", "server.js"]
