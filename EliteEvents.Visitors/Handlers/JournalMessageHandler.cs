@@ -7,13 +7,17 @@ public class JournalMessageHandler : IJournalMessageHandler
 {
     private readonly ILogger<JournalMessageHandler> _logger;
     private readonly DockingRedisService _dockingService;
+    private readonly IEventTickerService _eventTickerService;
 
     public MessageEvent[] Handles => [MessageEvent.Docked, MessageEvent.FSDJump];
 
-    public JournalMessageHandler(ILogger<JournalMessageHandler> logger, DockingRedisService dockingService)
+    public JournalMessageHandler(ILogger<JournalMessageHandler> logger,
+        DockingRedisService dockingService,
+        IEventTickerService eventTickerService)
     {
         _logger = logger;
         _dockingService = dockingService;
+        _eventTickerService = eventTickerService;
     }
 
     public async Task Handle(JournalMessage message)
@@ -63,11 +67,26 @@ public class JournalMessageHandler : IJournalMessageHandler
         {
             await _dockingService.RecordStationDockingAsync(journal.Message.StarSystem, stationName?.ToString() ?? "Unknown", stationType.ToString() ?? "Unknown", ts);
         }
+
+        await _eventTickerService.PublishEvent(new
+        {
+            type = "docked",
+            system = journal.Message.StarSystem,
+            station = stationName?.ToString(),
+            stationType = stationType.ToString(),
+            ts = ts.ToUnixTimeSeconds(),
+        });
     }
 
     private async Task HandleFSDJump(JournalMessage journal)
     {
         _logger.LogDebug("Handled FSDJump event to {System}", journal.Message.StarSystem);
         await _dockingService.RecordSystemVisitAsync(journal.Message.StarSystem);
+        await _eventTickerService.PublishEvent(new
+        {
+            type = "fsdjump",
+            system = journal.Message.StarSystem,
+            ts = journal.Header.GatewayTimestamp.ToUnixTimeSeconds(),
+        });
     }
 }

@@ -48,6 +48,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 });
 builder.Services
     .AddSingleton<DockingRedisService>()
+    .AddSingleton<IEventTickerService, EventTickerService>()
     .AddSingleton<WeeklyExpirationCalculator>()
     .AddSingleton<StreamHealthTracker>()
     .AddScoped<CachedSystemCount>();
