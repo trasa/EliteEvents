@@ -1,3 +1,4 @@
 #!/bin/bash
 set -e
 docker push trasa/elite-visitors:latest
+docker push trasa/elite-dashboard:latest

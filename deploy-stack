@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-echo "Pulling latest image"
+echo "Pulling latest images"
 docker pull $DOCKER_USERNAME/elite-visitors:latest
+docker pull $DOCKER_USERNAME/elite-dashboard:latest
 
-echo "Deploying latest image"
+echo "Deploying latest images"
 docker compose up -d
