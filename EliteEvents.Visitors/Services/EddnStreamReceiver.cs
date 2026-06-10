@@ -11,16 +11,19 @@ public class EddnStreamReceiver : BackgroundService
     private readonly IEddnStream _eddnStream;
     private readonly IMessageFactory _messageFactory;
     private readonly IMessageHandlerProvider<JournalMessage, MessageEvent> _handlers;
+    private readonly StreamHealthTracker _streamHealth;
 
     public EddnStreamReceiver(ILogger<EddnStreamReceiver> logger,
         IEddnStream eddnStream,
         IMessageFactory messageFactory,
-        IMessageHandlerProvider<JournalMessage, MessageEvent> handlers)
+        IMessageHandlerProvider<JournalMessage, MessageEvent> handlers,
+        StreamHealthTracker streamHealth)
     {
         _logger = logger;
         _eddnStream = eddnStream;
         _messageFactory = messageFactory;
         _handlers = handlers;
+        _streamHealth = streamHealth;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -31,6 +34,7 @@ public class EddnStreamReceiver : BackgroundService
             var str = _eddnStream.Receive();
             if (str != null)
             {
+                _streamHealth.RecordMessage();
                 var token = JToken.Parse(str);
                 var message = _messageFactory.Create( token);
                 if (message is JournalMessage journalMessage)

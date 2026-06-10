@@ -49,7 +49,13 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 builder.Services
     .AddSingleton<DockingRedisService>()
     .AddSingleton<WeeklyExpirationCalculator>()
+    .AddSingleton<StreamHealthTracker>()
     .AddScoped<CachedSystemCount>();
+
+// health checks
+builder.Services.AddHealthChecks()
+    .AddCheck<RedisHealthCheck>("redis")
+    .AddCheck<EddnStreamHealthCheck>("eddn-stream");
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -74,6 +80,7 @@ app.UseStaticFiles();
 app.UseAntiforgery();
 
 app.MapStaticAssets();
+app.MapHealthChecks("/health");
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 //app.MapHub<EliteHub>("/elite-hub");
