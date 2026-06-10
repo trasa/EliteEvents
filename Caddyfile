@@ -16,3 +16,6 @@ elite-visitors.meancat.com {
         output file /var/log/caddy/access.log
     }
 }
+elite.meancat.com {
+    reverse_proxy eddn-dashboard:3000
+}
