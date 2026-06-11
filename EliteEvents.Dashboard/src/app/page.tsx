@@ -8,7 +8,7 @@ export default function Home() {
         <h1>EDDN Live</h1>
         <p>
           Real-time galactic activity from the Elite Dangerous Data Network &mdash;
-          ingested by a C# / NetMQ service, served here from Redis.
+          ingested by a <a href="https://elite-visitors.meancat.com" target="_blank" rel="noopener noreferrer">C# / NetMQ service</a>, served here from Redis.
         </p>
       </header>
 
@@ -16,6 +16,16 @@ export default function Home() {
         <Leaderboard />
         <LiveTicker />
       </div>
+
+      <footer className="site-footer">
+        <a href="https://github.com/trasa" target="_blank" rel="noopener noreferrer">
+          GitHub
+        </a>
+        <span aria-hidden="true">&middot;</span>
+        <a href="https://www.linkedin.com/in/tonyrasa/" target="_blank" rel="noopener noreferrer">
+          LinkedIn
+        </a>
+      </footer>
     </div>
   );
 }

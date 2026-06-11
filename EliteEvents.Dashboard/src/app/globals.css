@@ -37,6 +37,17 @@ header.site h1 {
 }
 header.site p { color: var(--muted); font-size: 0.85rem; margin-top: 6px; }
 
+.site-footer {
+  border-top: 1px solid var(--line);
+  margin-top: 28px;
+  padding-top: 18px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .grid { display: grid; gap: 22px; grid-template-columns: 1.4fr 1fr; }
 @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
 
