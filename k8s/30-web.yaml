@@ -1,0 +1,95 @@
+# The web tier. Stateless by construction — static SSR, no circuit, no POSTs, no in-process cache
+# that matters — so replicas are interchangeable and the ingress needs no session affinity.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      imagePullSecrets:
+        - name: registry-meancat
+      securityContext:
+        runAsNonRoot: true
+      affinity:
+        podAntiAffinity:
+          # Spread across nodes when there is room, but don't block scheduling on a two-node
+          # cluster that is briefly down to one.
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: web
+      containers:
+        - name: web
+          image: registry.digitalocean.com/meancat/elite-web:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: Production
+            - name: ConnectionStrings__Redis
+              value: redis:6379,abortConnect=false
+            - name: REDIS_AUTH_FILE
+              value: /etc/redis-auth/password
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 5
+          # Readiness is Redis-only. The EDDN stream check is reported on /health for the uptime
+          # monitor but is not in the "ready" set: a silent firehose must not empty this Service
+          # while the pods are still serving 30-day data perfectly well.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: redis-auth
+              mountPath: /etc/redis-auth
+              readOnly: true
+      volumes:
+        - name: redis-auth
+          secret:
+            secretName: redis-auth
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -1,0 +1,34 @@
+name: Deploy to k8s.meancat.com
+
+# Manual, like every other workflow here. Takes a tag that Build and Push Images already produced;
+# it never builds, so what gets deployed is exactly what was tested.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (e.g. 1.0.0-alpha.g1a2b3c4)'
+        required: true
+        default: 'latest'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Fetch kubeconfig
+        run: doctl kubernetes cluster kubeconfig save ${{ vars.DOKS_CLUSTER_NAME }} --expiry-seconds 900
+
+      - name: Deploy
+        env:
+          VERSION: ${{ inputs.image_tag }}
+        run: ./deploy-k8s "$VERSION"
+
+      - name: Show what is running
+        run: kubectl -n elite get pods -o wide

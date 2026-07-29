@@ -1,0 +1,28 @@
+#!/bin/bash
+# Rolls a pushed version out to the DOKS cluster. Takes the image tag as its only argument.
+#   ./deploy-k8s 1.0.0-alpha.g1a2b3c4
+set -euo pipefail
+
+VERSION="${1:-${VERSION:-$(cat .image-version 2>/dev/null || true)}}"
+REGISTRY="${REGISTRY:-registry.digitalocean.com/meancat}"
+NAMESPACE="${NAMESPACE:-elite}"
+
+if [ -z "$VERSION" ]; then
+    echo "Usage: ./deploy-k8s <image-tag>" >&2
+    exit 1
+fi
+
+# Applies the manifests as committed (tagged :latest), then pins both deployments to the exact
+# version being rolled out. Pinning after apply keeps the committed YAML free of a tag that would
+# be stale the moment it was written.
+kubectl apply -k k8s/
+
+kubectl -n "$NAMESPACE" set image deployment/web "web=${REGISTRY}/elite-web:${VERSION}"
+kubectl -n "$NAMESPACE" set image deployment/ingestion "ingestion=${REGISTRY}/elite-ingestion:${VERSION}"
+
+# Ingestion first: it is a single writer with strategy Recreate, so it is briefly down and the
+# rollout should be seen through before the web tier starts.
+kubectl -n "$NAMESPACE" rollout status deployment/ingestion --timeout=5m
+kubectl -n "$NAMESPACE" rollout status deployment/web --timeout=5m
+
+echo "Deployed ${VERSION}"

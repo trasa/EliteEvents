@@ -1,0 +1,153 @@
+# In-cluster Redis: one replica, one small volume. Every key the apps write is TTL'd and
+# disposable, so this is deliberately not a managed database — losing it costs one refill from the
+# EDDN firehose.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+data:
+  redis.conf: |
+    bind 0.0.0.0
+    protected-mode yes
+    port 6379
+    dir /data
+
+    # Snapshot occasionally so a pod restart doesn't start from nothing. No AOF: durability here
+    # is a nicety, not a requirement.
+    save 900 1
+    save 300 10
+    appendonly no
+
+    # Evicting under pressure is the correct behaviour for this data set and beats the pod being
+    # OOM-killed. Raise this together with the container memory limit if the working set grows.
+    maxmemory 256mb
+    maxmemory-policy allkeys-lru
+---
+# Governing service for the StatefulSet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-headless
+spec:
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+# What the apps connect to.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  serviceName: redis-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      initContainers:
+        # Appends requirepass to the config at startup instead of baking the password into the
+        # ConfigMap or into argv, where `ps` inside the container would show it.
+        - name: render-config
+          image: busybox:1.37
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              cat /config/redis.conf > /etc/redis/redis.conf
+              printf 'requirepass %s\n' "$(cat /secret/password)" >> /etc/redis/redis.conf
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: secret
+              mountPath: /secret
+              readOnly: true
+            - name: rendered-config
+              mountPath: /etc/redis
+      containers:
+        - name: redis
+          image: redis:8.2-alpine
+          command: ["redis-server", "/etc/redis/redis.conf"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          env:
+            # redis-cli picks this up automatically, which keeps the password out of the probe
+            # command lines below.
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: redis-auth
+                  key: password
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: rendered-config
+              mountPath: /etc/redis
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: redis-config
+        - name: secret
+          secret:
+            secretName: redis-auth
+        - name: rendered-config
+          emptyDir:
+            medium: Memory
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: do-block-storage
+        resources:
+          requests:
+            storage: 5Gi

@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: elite
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # /api/stream is Server-Sent Events. Without these the proxy buffers the stream and holds
+    # frames back, and cuts the connection after its default 60s read timeout — the ticker would
+    # look broken while everything behind it worked fine.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - k8s.meancat.com
+      secretName: elite-tls
+  rules:
+    - host: k8s.meancat.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http

@@ -1,0 +1,27 @@
+# The public web tier. Build context is the repo root because the project references
+# EliteEvents.Eddn and the root holds Directory.Build.props / NuGet.config / dotnet-tools.json.
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+
+COPY Directory.Build.props NuGet.config dotnet-tools.json version.json ./
+COPY EliteEvents.Eddn/EliteEvents.Eddn.csproj EliteEvents.Eddn/
+COPY EliteEvents.Web/EliteEvents.Web.csproj EliteEvents.Web/
+RUN dotnet restore EliteEvents.Web/EliteEvents.Web.csproj
+
+# nswag generates the EDDN message classes during compile; the manifest at the repo root pins it.
+RUN dotnet tool restore
+
+COPY EliteEvents.Eddn/ EliteEvents.Eddn/
+COPY EliteEvents.Web/ EliteEvents.Web/
+
+RUN dotnet publish EliteEvents.Web/EliteEvents.Web.csproj -c Release -o /app/publish /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+WORKDIR /app
+COPY --from=build /app/publish .
+
+# The aspnet image listens on 8080 by default and ships a non-root 'app' user.
+EXPOSE 8080
+USER $APP_UID
+
+ENTRYPOINT ["dotnet", "EliteEvents.Web.dll"]

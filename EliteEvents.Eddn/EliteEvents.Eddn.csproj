@@ -19,10 +19,24 @@
         <PackageReference Include="StackExchange.Redis" Version="2.10.1" />
     </ItemGroup>
     
-    <Target Name="NSwag" BeforeTargets="CoreCompile" Condition="'$(Configuration)' == 'Debug'">
+    <!-- Generated clients are gitignored, so they exist locally only after a Debug build. A clean
+         checkout (CI, or a container build) has none, and Release used to skip generation entirely
+         — which meant any build that didn't start from a developer's working tree failed to
+         compile. Generate whenever the output is missing, whatever the configuration. -->
+    <Target Name="NSwag" BeforeTargets="CoreCompile"
+            Condition="'$(Configuration)' == 'Debug' Or !Exists('$(ProjectDir)Generated/Journal.g.cs') Or !Exists('$(ProjectDir)Generated/ApproachSettlement.g.cs')">
         <Exec WorkingDirectory="$(ProjectDir)" Command="dotnet nswag jsonschema2csclient /name:JournalMessage /namespace:EliteEvents.Eddn.Journal /input:https://eddn.edcd.io/schemas/journal/1 /output:Generated/Journal.g.cs " />
         <Exec WorkingDirectory="$(ProjectDir)" Command="dotnet nswag jsonschema2csclient /name:ApproachSettlementMessage /namespace:EliteEvents.Eddn.ApproachSettlement /input:https://eddn.edcd.io/schemas/approachsettlement/1 /output:Generated/ApproachSettlement.g.cs " />
         <ReplaceIntWithLong Files="$(ProjectDir)Generated/ApproachSettlement.g.cs;$(ProjectDir)Generated/Journal.g.cs" />
+
+        <!-- The default **/*.cs glob is expanded when the project loads, so files this target has
+             just created are not in @(Compile) yet. Re-adding them here is what lets a build
+             generate and compile them in one pass; Remove first keeps it idempotent for the
+             usual case where they already existed. -->
+        <ItemGroup>
+            <Compile Remove="$(ProjectDir)Generated/*.g.cs" />
+            <Compile Include="$(ProjectDir)Generated/*.g.cs" />
+        </ItemGroup>
     </Target>
 
     <!-- HACK: Replace all 'public int' with 'public long' in generated files 

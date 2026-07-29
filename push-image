@@ -1,4 +1,19 @@
 #!/bin/bash
-set -e
-docker push trasa/elite-visitors:latest
-docker push trasa/elite-dashboard:latest
+# Pushes what build-image produced to the DigitalOcean container registry.
+# Authenticate first:  doctl registry login
+set -euo pipefail
+
+REGISTRY="${REGISTRY:-registry.digitalocean.com/meancat}"
+VERSION="${VERSION:-$(cat .image-version 2>/dev/null || true)}"
+
+if [ -z "$VERSION" ]; then
+    echo "No version found. Run ./build-image first, or set VERSION." >&2
+    exit 1
+fi
+
+for image in elite-web elite-ingestion; do
+    docker push "${REGISTRY}/${image}:${VERSION}"
+    docker push "${REGISTRY}/${image}:latest"
+done
+
+echo "Pushed ${VERSION}. Deploy with: ./deploy-k8s ${VERSION}"

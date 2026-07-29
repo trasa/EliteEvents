@@ -1,5 +1,29 @@
 #!/bin/bash
-set -e
-# build for x86_64 instead
-docker buildx build --platform linux/amd64 -t trasa/elite-visitors:latest .
-docker buildx build --platform linux/amd64 -t trasa/elite-dashboard:latest ./EliteEvents.Dashboard
+# Builds both container images for the k8s stack. linux/amd64 explicitly, because the DOKS nodes
+# are amd64 and this is usually run from an arm64 Mac.
+#
+# The droplet stack's images (trasa/elite-visitors, trasa/elite-dashboard) are built by the old
+# root Dockerfile and are on their way out with Phase 5.
+set -euo pipefail
+
+REGISTRY="${REGISTRY:-registry.digitalocean.com/meancat}"
+
+# Immutable tag from Nerdbank.GitVersioning; NuGetPackageVersion is used rather than SemVer2
+# because it never contains the '+' that build metadata adds, which is not legal in a Docker tag.
+if [ -z "${VERSION:-}" ]; then
+    dotnet tool restore > /dev/null
+    VERSION="$(dotnet nbgv get-version -v NuGetPackageVersion)"
+fi
+
+echo "Building ${REGISTRY}/elite-{web,ingestion}:${VERSION}"
+
+docker buildx build --platform linux/amd64 -f Dockerfile.web \
+    -t "${REGISTRY}/elite-web:${VERSION}" \
+    -t "${REGISTRY}/elite-web:latest" .
+
+docker buildx build --platform linux/amd64 -f Dockerfile.ingestion \
+    -t "${REGISTRY}/elite-ingestion:${VERSION}" \
+    -t "${REGISTRY}/elite-ingestion:latest" .
+
+echo "$VERSION" > .image-version
+echo "Built ${VERSION} (recorded in .image-version for push-image)"

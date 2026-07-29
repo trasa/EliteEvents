@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: elite
+
+resources:
+  - 00-namespace.yaml
+  - 10-redis.yaml
+  - 20-ingestion.yaml
+  - 30-web.yaml
+  - 40-ingress.yaml
+  # cluster-issuer.yaml is deliberately not here: ClusterIssuers are cluster-scoped, and kustomize
+  # would stamp `namespace: elite` onto them because it can't know that about a CRD. They are
+  # one-time cluster bootstrap, applied alongside cert-manager itself.
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: elite-events
+
+# The deploy script pins these to a real version; latest is only the default so `kubectl apply -k`
+# works straight from a checkout.
+images:
+  - name: registry.digitalocean.com/meancat/elite-web
+    newTag: latest
+  - name: registry.digitalocean.com/meancat/elite-ingestion
+    newTag: latest
+
+# The redis-auth Secret is deliberately absent: it is created once, out of band, and never
+# committed. See k8s/README.md.

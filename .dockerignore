@@ -1,0 +1,33 @@
+# Keep the build context to what the images actually need. Without this every build shipped the
+# whole working tree — including appsettings.LocalUser.json with the local Redis password, and
+# whatever happened to be sitting in bin/ and obj/.
+**/bin
+**/obj
+**/node_modules
+**/.next
+**/.DS_Store
+
+.git
+.github
+.idea
+.claude
+.vs
+
+# Local secrets. These are gitignored; they must not reach an image either.
+**/appsettings.LocalUser.json
+
+# Generated EDDN clients are produced during the image build (see the NSwag target in
+# EliteEvents.Eddn.csproj), never copied from the host — that is what makes the build reproducible
+# from a clean checkout rather than from one developer's working tree.
+**/Generated/*.g.cs
+
+# Projects nothing here builds. EliteEvents.Visitors is deliberately NOT excluded: the old root
+# Dockerfile still builds it for the droplet stack until Phase 5 retires that path.
+EliteEvents.Dashboard
+EliteEvents.JournalWeb
+
+k8s
+*.md
+Caddyfile
+docker-compose.yaml
+redis_key_fixer.py

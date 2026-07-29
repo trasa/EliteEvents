@@ -1,6 +1,6 @@
 # Roadmap — merge Visitors + Dashboard into one ASP.NET/htmx app
 
-Status: **Phase 3 complete** (uncommitted). Branch: `blazor`.
+Status: **Phase 4 complete except provisioning** (uncommitted). Branch: `blazor`.
 
 > **Do not deploy the droplet stack from this branch.** `EliteEvents.Visitors` no longer ingests —
 > `Dockerfile` / `build-image` / `docker-compose.yaml` still build and run only that project, so
@@ -46,6 +46,8 @@ Redis is the only coupling between the two containers.
 | Look and feel | Elite theme from Visitors (dark + orange, EUROCAPS/Sintony, Bootstrap 5) |
 | Process split | Two containers: web app and EDDN service |
 | Rollout | Bring the new stack up in **DigitalOcean k8s (`doctl`)** and run it side-by-side with the existing droplets, then cut over |
+| Registry | **DigitalOcean Container Registry**, Basic tier, replacing the public Docker Hub repos |
+| k8s hostname | `k8s.meancat.com` while both stacks run; `elite.meancat.com` moves to it at cutover |
 | Data | **Data loss is acceptable.** The k8s stack starts on an empty Redis and refills from the EDDN firehose. No migration, no export/import. |
 | Redis in k8s | **In-cluster StatefulSet**, single replica — cheaper than a second managed instance, and the data is disposable and TTL'd |
 | Ingress / Caddy | Out of scope here — handled in the k8s step (Phase 4) |
@@ -259,23 +261,70 @@ Behaviour differences worth knowing:
 
 ## Phase 4 — Containers and k8s, running side-by-side
 
-- [ ] `Dockerfile.web` + `Dockerfile.ingestion` at repo root (both need solution-level build context).
-- [ ] `build-image` / `push-image` / `.github/workflows/build-push-images.yml` build and push
-      `trasa/elite-web` + `trasa/elite-ingestion`.
-- [ ] k8s manifests: Deployment + Service for web (n replicas), Deployment for ingestion
+Registry is **DigitalOcean Container Registry**, not Docker Hub — one fewer external account, and
+DOKS mounts the pull secret itself.
+
+- [x] `Dockerfile.web` + `Dockerfile.ingestion` at repo root (both need solution-level build context).
+- [x] `build-image` / `push-image` / `.github/workflows/build-push-images.yml` build and push
+      `registry.digitalocean.com/meancat/elite-web` + `.../elite-ingestion`.
+- [x] k8s manifests: Deployment + Service for web (n replicas), Deployment for ingestion
       (`replicas: 1`, `strategy: Recreate` so a rollout never runs two writers), a Secret for the
       Redis password mounted at `REDIS_AUTH_FILE`, and probes wired to the health endpoints from
       Phases 2–3.
-- [ ] Redis StatefulSet: single replica, headless Service, modest PVC. Set `maxmemory` plus
+- [x] Redis StatefulSet: single replica, headless Service, modest PVC. Set `maxmemory` plus
       `allkeys-lru` — every key here is already TTL'd and disposable, so eviction under pressure is
       the correct behaviour and beats the pod getting OOM-killed. Keep the password Secret even
       in-cluster so `AddEliteRedis()` follows an identical code path in both environments; the
       connection string drops `ssl=true` (in-cluster, unlike DO managed), which the
       `ConnectionStrings__Redis` env var handles with no code change.
-- [ ] Ingress (replaces Caddy) + TLS, on a test hostname first.
-- [ ] Bring the stack up via `doctl`, confirm ingestion fills the empty Redis and the UI reads it.
+- [x] Ingress (replaces Caddy) + TLS, on a test hostname first — `k8s.meancat.com`, ingress-nginx
+      plus cert-manager.
+- [ ] **Bring the stack up via `doctl`** — not done. The stored `doctl` token 401s, and creating
+      the registry, cluster and load balancer bills roughly $42/mo. Runbook: `k8s/README.md`.
 
 The droplets keep running untouched throughout this phase, on their own managed Redis.
+
+### Phase 4 outcome
+
+Everything except the provisioning itself is written and verified. Both images build from a
+**clean** context and the whole stack was deployed to a local Kubernetes cluster (Docker Desktop,
+with the DO-specific bits patched out) where it came up Ready in 20s: ingestion filled an empty
+in-cluster Redis from the live firehose, both web replicas passed readiness, `/api/*`, `/health*`
+and the SSE ticker all served correctly through the Service, and `heartbeat:eddn` round-tripped
+between the two pods. The namespace was deleted afterwards.
+
+Two latent bugs surfaced while making the images build, both pre-existing:
+
+- **CI could never have built an image.** `EliteEvents.Eddn/Generated/*.g.cs` are gitignored and
+  the NSwag target only ran in Debug, so a Release build outside a developer's working tree had no
+  message types to compile. It worked locally only because `docker build` copied the generated
+  files off the host. The target now also fires when the output is missing, and — because MSBuild
+  expands the `**/*.cs` glob at project load — re-adds the freshly generated files to `@(Compile)`
+  so one pass generates *and* compiles them. `dotnet tool restore` moved into both Dockerfiles.
+- **`appsettings.LocalUser.json` was being baked into the production image.** There was no
+  `.dockerignore` at all, so every build shipped the whole working tree including the local Redis
+  password. Now excluded, along with `bin`/`obj`/`.git`/the generated clients.
+
+Decisions:
+
+- **DOCR Basic ($5/mo)** over the free Starter tier, which allows one repository and 500 MB — two
+  images need two repos.
+- **2 × `s-1vcpu-2gb`** nodes: the cheapest shape where web's two replicas can actually land on
+  different nodes, which is the whole point of the stateless split.
+- **Redis password via an init container.** It appends `requirepass` to the rendered config in a
+  memory-backed `emptyDir`, so the secret is in neither the ConfigMap nor `ps` output. Probes use
+  `REDISCLI_AUTH` so it stays off the probe command lines too.
+- **`cluster-issuer.yaml` is outside `kustomization.yaml`.** Kustomize stamps `namespace: elite`
+  onto ClusterIssuers because it can't know a CRD is cluster-scoped; they belong with the
+  cert-manager install anyway.
+- **`deploy-k8s` applies the manifests then pins the tag** with `kubectl set image`, so committed
+  YAML never carries a version that is stale the moment it is written.
+- The old root `Dockerfile` and the droplet `build-image` targets still work — `.dockerignore`
+  deliberately keeps `EliteEvents.Visitors` in the context until Phase 5 retires that path.
+
+**Before provisioning:** `doctl auth init`, then follow `k8s/README.md` in order. DNS for
+`k8s.meancat.com` has to resolve to the load balancer before cert-manager can complete HTTP-01,
+and the issuer annotation should point at `letsencrypt-staging` for the first attempt.
 
 ## Phase 5 — Cut over and delete
 

@@ -1,0 +1,69 @@
+# The single EDDN writer. replicas: 1 and strategy: Recreate together guarantee that a rollout
+# never has two of these running at once — two subscribers would double-count every docking.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ingestion
+  template:
+    metadata:
+      labels:
+        app: ingestion
+    spec:
+      imagePullSecrets:
+        - name: registry-meancat
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: ingestion
+          image: registry.digitalocean.com/meancat/elite-ingestion:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: Production
+            - name: ConnectionStrings__Redis
+              value: redis:6379,abortConnect=false
+            - name: REDIS_AUTH_FILE
+              value: /etc/redis-auth/password
+          # Liveness runs no health checks at all — it only proves the process answers. A quiet
+          # EDDN period or an unreachable Redis must not get the single writer restarted while it
+          # is already retrying; that is readiness' job to report.
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: redis-auth
+              mountPath: /etc/redis-auth
+              readOnly: true
+      volumes:
+        - name: redis-auth
+          secret:
+            secretName: redis-auth

@@ -1,0 +1,25 @@
+# The EDDN ingestion service. Same build shape as Dockerfile.web; it serves nothing but the two
+# health endpoints k8s probes.
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+
+COPY Directory.Build.props NuGet.config dotnet-tools.json version.json ./
+COPY EliteEvents.Eddn/EliteEvents.Eddn.csproj EliteEvents.Eddn/
+COPY EliteEvents.Ingestion/EliteEvents.Ingestion.csproj EliteEvents.Ingestion/
+RUN dotnet restore EliteEvents.Ingestion/EliteEvents.Ingestion.csproj
+
+RUN dotnet tool restore
+
+COPY EliteEvents.Eddn/ EliteEvents.Eddn/
+COPY EliteEvents.Ingestion/ EliteEvents.Ingestion/
+
+RUN dotnet publish EliteEvents.Ingestion/EliteEvents.Ingestion.csproj -c Release -o /app/publish /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+WORKDIR /app
+COPY --from=build /app/publish .
+
+EXPOSE 8080
+USER $APP_UID
+
+ENTRYPOINT ["dotnet", "EliteEvents.Ingestion.dll"]
