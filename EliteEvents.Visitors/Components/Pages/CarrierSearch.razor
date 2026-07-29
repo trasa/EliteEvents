@@ -1,6 +1,6 @@
 @page "/carrier-search"
-@using EliteEvents.Visitors.Services
-@inject DockingRedisService DockingService
+@using EliteEvents.Eddn.Storage
+@inject IDockingReader DockingService
 @inject NavigationManager Navigation
 @rendermode InteractiveServer
 
@@ -88,7 +88,7 @@
 @code {
     private string searchQuery = "";
     private string lastSearchQuery = "";
-    private List<string>? matchingCarriers;
+    private IReadOnlyList<string>? matchingCarriers;
     private bool isLoading = false;
     private bool searchPerformed = false;
     private string? errorMessage;

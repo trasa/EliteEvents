@@ -1,10 +1,10 @@
 using EliteEvents.Eddn.Config;
 using EliteEvents.Eddn.Handlers;
 using EliteEvents.Eddn.Journal;
+using EliteEvents.Eddn.Storage;
 using EliteEvents.Visitors.Components;
 using EliteEvents.Visitors.Handlers;
 using EliteEvents.Visitors.Services;
-using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,27 +31,13 @@ builder.Services
     .AddHostedService<EddnStreamReceiver>();
 
 // redis
-builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
-{
-    var environment = builder.Configuration.GetValue<string>("Environment")?.ToLower() ?? "local";
-    var config = builder.Configuration.GetConnectionString($"redis-{environment}") ?? "localhost:6379";
-    var passwordFile = Environment.GetEnvironmentVariable("REDIS_AUTH_FILE");
-    if (File.Exists(passwordFile))
-    {
-        var password = File.ReadAllText(passwordFile).Trim();
-        config += ",password=" + password;
-    }
-    Console.WriteLine($"Config: {config}");
-    var options = ConfigurationOptions.Parse(config);
-    options.AbortOnConnectFail = false;
-    return ConnectionMultiplexer.Connect(options, Console.Out);
-});
+// This app both ingests and serves, so it registers the write side and the read side. The
+// Phase 2/3 split gives each container only the half it needs.
 builder.Services
-    .AddSingleton<DockingRedisService>()
-    .AddSingleton<IEventTickerService, EventTickerService>()
-    .AddSingleton<WeeklyExpirationCalculator>()
-    .AddSingleton<StreamHealthTracker>()
-    .AddScoped<CachedSystemCount>();
+    .AddEliteRedis(builder.Configuration)
+    .AddEliteRedisReader()
+    .AddEliteRedisWriter()
+    .AddSingleton<StreamHealthTracker>();
 
 // health checks
 builder.Services.AddHealthChecks()

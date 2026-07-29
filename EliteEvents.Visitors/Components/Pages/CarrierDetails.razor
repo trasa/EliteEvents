@@ -1,6 +1,6 @@
 @page "/carrier-details/{CarrierId}"
-@using EliteEvents.Visitors.Services
-@inject DockingRedisService DockingService
+@using EliteEvents.Eddn.Storage
+@inject IDockingReader DockingService
 @inject NavigationManager Navigation
 @rendermode InteractiveServer
 
@@ -122,7 +122,7 @@
     [Parameter]
     public string CarrierId { get; set; } = "";
 
-    private List<CarrierDockingInfo>? carrierInfo;
+    private IReadOnlyList<CarrierDockingInfo>? carrierInfo;
     private bool isLoading = true;
     private string? errorMessage;
 

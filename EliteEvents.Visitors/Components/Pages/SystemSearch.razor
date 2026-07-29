@@ -1,7 +1,7 @@
 @page "/system-search"
-@using EliteEvents.Visitors.Services
-@inject DockingRedisService DockingService
-@inject CachedSystemCount CachedSystemCount
+@using EliteEvents.Eddn.Storage
+@inject IDockingReader DockingService
+@inject ICachedSystemCount CachedSystemCount
 @inject NavigationManager Navigation
 @rendermode InteractiveServer
 
@@ -88,7 +88,7 @@
 @code {
     private string searchQuery = "";
     private string lastSearchQuery = "";
-    private List<string>? matchingSystems;
+    private IReadOnlyList<string>? matchingSystems;
     private bool isLoading = false;
     private bool searchPerformed = false;
     private string? errorMessage;

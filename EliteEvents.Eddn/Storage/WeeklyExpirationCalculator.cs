@@ -1,7 +1,12 @@
 using Cronos;
 
-namespace EliteEvents.Visitors.Services;
+namespace EliteEvents.Eddn.Storage;
 
+/// <summary>
+/// Works out when the most-visited leaderboard resets. Elite Dangerous does its weekly
+/// server maintenance at 07:30 UTC on Thursday, so the leaderboard is scoped to that cycle
+/// rather than to a rolling window like the rest of the data.
+/// </summary>
 public class WeeklyExpirationCalculator
 {
     // every thursday at 0730 (utc)

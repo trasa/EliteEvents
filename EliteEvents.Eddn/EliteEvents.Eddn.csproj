@@ -7,12 +7,16 @@
     </PropertyGroup>
     
     <ItemGroup>
+        <PackageReference Include="Cronos" Version="0.11.1" />
         <PackageReference Include="Iconic.Zlib.Netstandard" Version="1.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.2" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.2" />
+        <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions" Version="10.0.2" />
         <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.2" />
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" version="10.0.2" />
         <PackageReference Include="NetMQ" Version="4.0.4.2" />
         <PackageReference Include="Newtonsoft.Json" Version="$(NewtonsoftJsonVersion)" />
+        <PackageReference Include="StackExchange.Redis" Version="2.10.1" />
     </ItemGroup>
     
     <Target Name="NSwag" BeforeTargets="CoreCompile" Condition="'$(Configuration)' == 'Debug'">

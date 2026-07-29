@@ -1,23 +1,23 @@
 using EliteEvents.Eddn.Journal;
-using EliteEvents.Visitors.Services;
+using EliteEvents.Eddn.Storage;
 
 namespace EliteEvents.Visitors.Handlers;
 
 public class JournalMessageHandler : IJournalMessageHandler
 {
     private readonly ILogger<JournalMessageHandler> _logger;
-    private readonly DockingRedisService _dockingService;
-    private readonly IEventTickerService _eventTickerService;
+    private readonly IDockingWriter _dockingWriter;
+    private readonly IEventPublisher _eventPublisher;
 
     public MessageEvent[] Handles => [MessageEvent.Docked, MessageEvent.FSDJump];
 
     public JournalMessageHandler(ILogger<JournalMessageHandler> logger,
-        DockingRedisService dockingService,
-        IEventTickerService eventTickerService)
+        IDockingWriter dockingWriter,
+        IEventPublisher eventPublisher)
     {
         _logger = logger;
-        _dockingService = dockingService;
-        _eventTickerService = eventTickerService;
+        _dockingWriter = dockingWriter;
+        _eventPublisher = eventPublisher;
     }
 
     public async Task Handle(JournalMessage message)
@@ -61,32 +61,23 @@ public class JournalMessageHandler : IJournalMessageHandler
 
         if (stationType.ToString() == "FleetCarrier")
         {
-            await _dockingService.RecordFleetCarrierDockingAsync(stationName?.ToString() ?? "Unknown", ts);
+            await _dockingWriter.RecordFleetCarrierDockingAsync(stationName?.ToString() ?? "Unknown", ts);
         }
         else
         {
-            await _dockingService.RecordStationDockingAsync(journal.Message.StarSystem, stationName?.ToString() ?? "Unknown", stationType.ToString() ?? "Unknown", ts);
+            await _dockingWriter.RecordStationDockingAsync(journal.Message.StarSystem,
+                stationName?.ToString() ?? "Unknown", stationType.ToString() ?? "Unknown", ts);
         }
 
-        await _eventTickerService.PublishEvent(new
-        {
-            type = "docked",
-            system = journal.Message.StarSystem,
-            station = stationName?.ToString(),
-            stationType = stationType.ToString(),
-            ts = ts.ToUnixTimeSeconds(),
-        });
+        await _eventPublisher.PublishAsync(LiveEvent.Docked(
+            journal.Message.StarSystem, stationName?.ToString(), stationType.ToString(), ts));
     }
 
     private async Task HandleFSDJump(JournalMessage journal)
     {
         _logger.LogDebug("Handled FSDJump event to {System}", journal.Message.StarSystem);
-        await _dockingService.RecordSystemVisitAsync(journal.Message.StarSystem);
-        await _eventTickerService.PublishEvent(new
-        {
-            type = "fsdjump",
-            system = journal.Message.StarSystem,
-            ts = journal.Header.GatewayTimestamp.ToUnixTimeSeconds(),
-        });
+        await _dockingWriter.RecordSystemVisitAsync(journal.Message.StarSystem);
+        await _eventPublisher.PublishAsync(
+            LiveEvent.FsdJump(journal.Message.StarSystem, journal.Header.GatewayTimestamp));
     }
 }

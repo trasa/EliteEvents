@@ -1,7 +1,7 @@
 @page "/most-visited"
-@using EliteEvents.Visitors.Services
+@using EliteEvents.Eddn.Storage
 @inject NavigationManager Navigation
-@inject DockingRedisService DockingService
+@inject IDockingReader DockingService
 @rendermode InteractiveServer
 
 <PageTitle>Most-Visited Systems</PageTitle>
@@ -78,7 +78,7 @@
 
 @code {
 
-    private List<SystemVisitInfo>? systems;
+    private IReadOnlyList<SystemVisitInfo>? systems;
     private bool isLoading = true;
     private string? errorMessage;
 

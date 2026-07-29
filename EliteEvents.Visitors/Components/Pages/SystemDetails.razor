@@ -1,6 +1,6 @@
 @page "/system-details/{SystemName}"
-@using EliteEvents.Visitors.Services
-@inject DockingRedisService DockingService
+@using EliteEvents.Eddn.Storage
+@inject IDockingReader DockingService
 @inject NavigationManager Navigation
 @rendermode InteractiveServer
 
@@ -173,7 +173,7 @@
     [Parameter]
     public string SystemName { get; set; } = "";
 
-    private List<StationDockingInfo>? stations;
+    private IReadOnlyList<StationDockingInfo>? stations;
     private bool isLoading = true;
     private string? errorMessage;
 
