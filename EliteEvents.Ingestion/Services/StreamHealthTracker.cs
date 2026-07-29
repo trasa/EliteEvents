@@ -1,9 +1,10 @@
-namespace EliteEvents.Visitors.Services;
+namespace EliteEvents.Ingestion.Services;
 
 /// <summary>
-/// Tracks when the EDDN ZeroMQ stream last delivered a message. Shared (singleton)
-/// between <see cref="EddnStreamReceiver"/> and the stream health check, since both
-/// live in the same process.
+/// Tracks when the EDDN ZeroMQ stream last delivered a message. In-process and free to read,
+/// so <see cref="EddnStreamReceiver"/> can evaluate its reconnect decision on every idle
+/// receive without touching Redis. The same timestamp reaches the health checks — in this
+/// process and in the web tier — as the throttled <c>heartbeat:eddn</c> key.
 /// </summary>
 public class StreamHealthTracker
 {

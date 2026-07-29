@@ -1,7 +1,7 @@
 using EliteEvents.Eddn.Journal;
 using EliteEvents.Eddn.Storage;
 
-namespace EliteEvents.Visitors.Handlers;
+namespace EliteEvents.Ingestion.Handlers;
 
 public class JournalMessageHandler : IJournalMessageHandler
 {

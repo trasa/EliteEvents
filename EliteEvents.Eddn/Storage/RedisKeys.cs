@@ -73,6 +73,27 @@ public static class RedisKeys
     /// <summary>Cached total system count, to avoid a full SCAN per page render.</summary>
     public const string SystemCountCache = "cache:system:count";
 
+    /// <summary>
+    /// Unix-millisecond timestamp of the last EDDN message the ingestion service received.
+    /// The receiver used to share this with the health check through an in-process field; once
+    /// ingestion and the web tier are separate containers the signal has to travel through
+    /// Redis for the web tier — and any external uptime monitor — to see it.
+    /// </summary>
+    public const string EddnHeartbeat = "heartbeat:eddn";
+
+    /// <summary>
+    /// Minimum spacing between heartbeat writes. EDDN delivers several messages a second and
+    /// the readers only care about resolution of minutes, so writing every message would be
+    /// pure round-trip waste.
+    /// </summary>
+    public static readonly TimeSpan HeartbeatWriteInterval = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// TTL on the heartbeat, comfortably longer than any silence threshold, so a torn-down
+    /// ingestion service doesn't leave a stale timestamp behind forever.
+    /// </summary>
+    public static readonly TimeSpan HeartbeatExpiration = TimeSpan.FromHours(1);
+
     // ---- scan patterns -------------------------------------------------------------------
 
     /// <summary>Matches one key per system that has any station activity.</summary>

@@ -1,10 +1,6 @@
 using EliteEvents.Eddn.Config;
-using EliteEvents.Eddn.Handlers;
-using EliteEvents.Eddn.Journal;
 using EliteEvents.Eddn.Storage;
 using EliteEvents.Visitors.Components;
-using EliteEvents.Visitors.Handlers;
-using EliteEvents.Visitors.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,25 +15,14 @@ if (builder.Environment.IsDevelopment())
 builder.Configuration.AddEnvironmentVariables();
 
 // Configuration / IOptions
+// EDDN ingestion lives in EliteEvents.Ingestion now; the options are still bound here because
+// the stream health check reads its silence threshold from them.
 builder.Services.Configure<EddnOptions>(builder.Configuration.GetSection("Eddn"));
 
-// eddn
-builder.Services.AddEddnStream()
-    .AddSingleton<IJournalMessageHandler, JournalMessageHandler>()
-    .AddSingleton<IMessageHandler<JournalMessage, MessageEvent>, JournalMessageHandler>();
-
-// hosted services
-builder.Services
-    .AddHostedService<EddnStreamReceiver>();
-
-// redis
-// This app both ingests and serves, so it registers the write side and the read side. The
-// Phase 2/3 split gives each container only the half it needs.
+// redis — read side only. This app serves queries and never writes docking data.
 builder.Services
     .AddEliteRedis(builder.Configuration)
-    .AddEliteRedisReader()
-    .AddEliteRedisWriter()
-    .AddSingleton<StreamHealthTracker>();
+    .AddEliteRedisReader();
 
 // health checks
 builder.Services.AddHealthChecks()

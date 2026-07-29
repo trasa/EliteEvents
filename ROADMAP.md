@@ -1,6 +1,11 @@
 # Roadmap — merge Visitors + Dashboard into one ASP.NET/htmx app
 
-Status: **Phase 1 complete** (uncommitted). Branch: `blazor`.
+Status: **Phase 2 complete** (uncommitted). Branch: `blazor`.
+
+> **Do not deploy the droplet stack from this branch.** `EliteEvents.Visitors` no longer ingests —
+> `Dockerfile` / `build-image` / `docker-compose.yaml` still build and run only that project, so
+> pushing the image from here would leave production with a web tier and no writer. The compose
+> stack gets its ingestion container in Phase 4.
 
 ## Goal
 
@@ -16,7 +21,7 @@ SSR, no Blazor Server circuit — so pods are interchangeable and need no sessio
 ## Target topology
 
 ```
-EliteEvents.Eddn        (class library)
+EliteEvents.Eddn        (class library)   [Phases 1-2 done]
     EDDN stream + generated message types + NEW: Redis storage layer
         |
         +-- EliteEvents.Ingestion   worker + /health   writes Redis   [replicas: 1]
@@ -115,11 +120,11 @@ Quirks preserved as-is rather than silently "fixed":
 
 ### Pre-existing issues found while verifying (not introduced here)
 
-- [ ] **An unreachable Redis kills the whole host.** A `RedisConnectionException` from a docking
+- [x] **An unreachable Redis kills the whole host.** A `RedisConnectionException` from a docking
       write propagates out of `EddnStreamReceiver.ExecuteAsync`, and the default
       `BackgroundServiceExceptionBehavior.StopHost` stops the app. Today `restart: unless-stopped`
-      masks it; under k8s this is a crash-loop on any Redis blip. **Fix in Phase 2** — catch and
-      log per-message, and let readiness rather than process death report the outage.
+      masks it; under k8s this is a crash-loop on any Redis blip. **Fixed in Phase 2** — caught and
+      logged per-message, and readiness rather than process death reports the outage.
 - [ ] **`/` and `/system-search` return 500 when Redis is down**, because both call
       `CachedSystemCount` in `OnInitializedAsync` with no try/catch, unlike every other page.
       **Fix in Phase 3** when these pages are rewritten.
@@ -129,15 +134,48 @@ Quirks preserved as-is rather than silently "fixed":
 ASP.NET minimal host rather than a bare Worker, because k8s probes want HTTP. Exposes **only**
 `/health/live` and `/health/ready`. No UI, no static files.
 
-- [ ] Move in `EddnStreamReceiver`, `JournalMessageHandler`, `StreamHealthTracker`,
+- [x] Move in `EddnStreamReceiver`, `JournalMessageHandler`, `StreamHealthTracker`,
       `EddnStreamHealthCheck`, and the handler DI registration.
-- [ ] Receiver writes a throttled (~5s) **`heartbeat:eddn`** key holding the last-message
+- [x] Receiver writes a throttled (~5s) **`heartbeat:eddn`** key holding the last-message
       timestamp. `EddnStreamHealthCheck` reads an in-process field today; once ingestion and web
       are separate processes that liveness signal has to travel through Redis for the web tier and
       any uptime monitor to see it.
-- [ ] Liveness = process responsive; readiness = Redis reachable **and** the EDDN stream not
+- [x] Liveness = process responsive; readiness = Redis reachable **and** the EDDN stream not
       silent past `EddnOptions.ReconnectAfterSilence`. Keep liveness lenient so k8s does not
       restart a pod that is merely waiting out a quiet EDDN period.
+
+### Phase 2 outcome
+
+`EliteEvents.Ingestion` owns the firehose; `EliteEvents.Visitors` is now read-only and keeps
+serving the UI off the same Redis. Both were run together against local Redis: ingestion writes
+dockings and publishes `eddn:events`, and every Visitors route still returns 200.
+
+Departures from the plan as written, and why:
+
+- **`EddnStreamHealthCheck` landed in `EliteEvents.Eddn/Storage/`, not in Ingestion.** Once the
+  signal it reads is a Redis key, it is shared code — the web tier's `/health` uses the identical
+  check. `IStreamHeartbeatWriter` / `IStreamHeartbeatReader` (`RedisStreamHeartbeat`) live beside
+  it and are registered by `AddEliteRedis()` itself rather than by the reader or writer bundle:
+  ingestion writes the heartbeat *and* reads its own back, which makes readiness cover the whole
+  round trip.
+- **The redundant `IJournalMessageHandler` DI registration was dropped.** `MessageHandlerProvider`
+  only ever resolves `IMessageHandler<JournalMessage, MessageEvent>`; registering the marker
+  interface as well just built a second, unused handler instance.
+- **Heartbeat writes swallow their own failures** and leave the throttle advanced, so an
+  unreachable Redis costs one warning per interval instead of one per message. Repeated
+  processing failures in the receiver are likewise logged once at the start of an outage and then
+  at most every 30s, with a recovery line when messages start landing again.
+
+Verified: `/health/live` stays 200 while `/health/ready` reports 503 for both a missing heartbeat
+and an unreachable Redis; with Redis pointed at a dead port the ingestion host keeps running and
+logs `Failed to process an EDDN message` instead of stopping; deleting `heartbeat:eddn` turns the
+Visitors `/health` unhealthy and it recovers on the next heartbeat write from the other process —
+which is the cross-process signal working.
+
+**Carry into Phase 3:** the web tier must keep `eddn-stream` out of whatever check set its
+*readiness* probe uses (report it on `/health` for the uptime monitor only). A silent EDDN period
+is not a reason to pull every web pod out of the service — those pods serve 30-day-TTL data just
+fine.
 
 ## Phase 3 — `EliteEvents.Web`
 

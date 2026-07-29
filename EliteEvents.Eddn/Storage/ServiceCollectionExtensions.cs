@@ -26,6 +26,12 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddEliteRedis(this IServiceCollection services, IConfiguration configuration)
     {
         services.TryAddSingleton<IConnectionMultiplexer>(_ => Connect(configuration));
+
+        // The EDDN heartbeat is registered here rather than on one side or the other: ingestion
+        // writes it, the web tier reads it, and ingestion reads its own back for readiness.
+        services.TryAddSingleton<RedisStreamHeartbeat>();
+        services.TryAddSingleton<IStreamHeartbeatWriter>(sp => sp.GetRequiredService<RedisStreamHeartbeat>());
+        services.TryAddSingleton<IStreamHeartbeatReader>(sp => sp.GetRequiredService<RedisStreamHeartbeat>());
         return services;
     }
 
