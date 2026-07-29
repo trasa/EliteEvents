@@ -1,0 +1,93 @@
+@page "/system-search"
+@inject IDockingReader Reader
+@inject ICachedSystemCount SystemCount
+@inject NavigationManager Navigation
+@inject ILogger<SystemSearch> Logger
+
+<PageTitle>System Search</PageTitle>
+
+<div class="container mt-4">
+    <h2>System Search</h2>
+
+    <div class="row mt-4">
+        <div class="col-md-8">
+            @* Without htmx this is an ordinary GET form and the page renders the results itself;
+               with htmx the same request swaps just the results card. Either way it is a GET, so
+               there is no antiforgery token in play. *@
+            <form class="input-group mb-3" action="/system-search" method="get"
+                  hx-get="/fragments/system-search" hx-target="#search-results" hx-swap="innerHTML">
+                <input type="text" class="form-control" name="q" value="@Query"
+                       placeholder="Enter system name or partial match (ex. Sol or Colonia)"
+                       minlength="@MinimumQueryLength" required/>
+                <button class="btn btn-primary" type="submit">Search</button>
+            </form>
+            <small class="text-muted">
+                Enter at least @MinimumQueryLength characters to search for systems with docking data.
+                @if (systemCount is not null)
+                {
+                    <text>Known Systems: ~ @systemCount</text>
+                }
+            </small>
+        </div>
+    </div>
+
+    <div id="search-results">
+        <SystemResults Query="@Query" Systems="matches" ErrorMessage="@errorMessage"/>
+    </div>
+</div>
+
+@code {
+    public const int MinimumQueryLength = 3;
+
+    [SupplyParameterFromQuery(Name = "q")]
+    public string? Query { get; set; }
+
+    private IReadOnlyList<string>? matches;
+    private string? errorMessage;
+    private long? systemCount;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            systemCount = await SystemCount.GetSystemCountAsync();
+        }
+        catch (Exception)
+        {
+            systemCount = null;
+        }
+
+        matches = null;
+        errorMessage = null;
+
+        var query = Query?.Trim();
+        if (string.IsNullOrEmpty(query))
+        {
+            return;
+        }
+
+        if (query.Length < MinimumQueryLength)
+        {
+            errorMessage = $"Please enter at least {MinimumQueryLength} characters to search.";
+            return;
+        }
+
+        try
+        {
+            matches = await Reader.GetMatchingSystemsAsync(query);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "System search failed for {Query}", query);
+            errorMessage = UserMessages.DataUnavailable;
+            return;
+        }
+
+        // One hit means the search was really a lookup. NavigateTo during static SSR turns into a
+        // redirect response, which is exactly what the old interactive page did by hand.
+        if (matches.Count == 1)
+        {
+            Navigation.NavigateTo($"/system/{Uri.EscapeDataString(matches[0])}");
+        }
+    }
+}

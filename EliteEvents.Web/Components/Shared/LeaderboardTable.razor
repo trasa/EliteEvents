@@ -1,0 +1,44 @@
+@* Body of the most-visited panel. Rendered inline on first load and again on every htmx poll,
+   so the polling endpoint and the page can't disagree about what the table looks like. *@
+
+@if (ErrorMessage is not null)
+{
+    <p class="text-muted mb-0">@ErrorMessage</p>
+}
+else if (Systems is null || Systems.Count == 0)
+{
+    <p class="text-muted mb-0">No visits recorded yet.</p>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-dark table-hover mb-0">
+            <thead>
+            <tr>
+                <th class="text-end" style="width: 3rem">#</th>
+                <th>System</th>
+                <th class="text-end">Visits</th>
+            </tr>
+            </thead>
+            <tbody>
+            @{
+                var rank = 1;
+            }
+            @foreach (var system in Systems)
+            {
+                <tr>
+                    <td class="text-end text-muted">@(rank++)</td>
+                    <td><a href="/system/@Uri.EscapeDataString(system.SystemName)">@system.SystemName</a></td>
+                    <td class="text-end"><span class="badge bg-primary fs-6">@system.VisitCount</span></td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<SystemVisitInfo>? Systems { get; set; }
+
+    [Parameter] public string? ErrorMessage { get; set; }
+}

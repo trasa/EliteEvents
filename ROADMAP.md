@@ -1,11 +1,13 @@
 # Roadmap — merge Visitors + Dashboard into one ASP.NET/htmx app
 
-Status: **Phase 2 complete** (uncommitted). Branch: `blazor`.
+Status: **Phase 3 complete** (uncommitted). Branch: `blazor`.
 
 > **Do not deploy the droplet stack from this branch.** `EliteEvents.Visitors` no longer ingests —
 > `Dockerfile` / `build-image` / `docker-compose.yaml` still build and run only that project, so
-> pushing the image from here would leave production with a web tier and no writer. The compose
-> stack gets its ingestion container in Phase 4.
+> pushing the image from here would leave production with a web tier and no writer. Containers are
+> rebuilt for k8s in Phase 4; nothing in this branch is deployable until then.
+
+Local ports: web `5240`, ingestion `5239`, the retired Visitors app `5238`.
 
 ## Goal
 
@@ -197,7 +199,7 @@ Routes, merging both apps:
 | `/api/stream` | Dashboard | SSE |
 | `/health`, `/api/health` | both | both paths; each old app used a different one |
 
-- [ ] **SSE ticker:** one shared `ISubscriber` subscription per pod, fanned out to that pod's
+- [x] **SSE ticker:** one shared `ISubscriber` subscription per pod, fanned out to that pod's
       connected clients via a per-client `Channel<T>` — fixes the per-client-connection design the
       Next app flagged as a TODO in its own README. The server renders the `<li>` fragment and
       pushes HTML (the htmx-native approach), so `sse-swap="message"` + `hx-swap="afterbegin"`
@@ -207,17 +209,53 @@ Routes, merging both apps:
 
 The point of static SSR is that any pod can serve any request. Things to actually verify:
 
-- [ ] No `@rendermode` anywhere, no `AddInteractiveServerComponents()`, no `blazor.web.js` —
+- [x] No `@rendermode` anywhere, no `AddInteractiveServerComponents()`, no `blazor.web.js` —
       confirms there is no circuit and therefore no need for session affinity.
-- [ ] Every page and fragment endpoint is a **GET**. No POST means no antiforgery token, which
+- [x] Every page and fragment endpoint is a **GET**. No POST means no antiforgery token, which
       means no shared Data Protection key ring is required. If a POST is ever added, the key ring
       must move to Redis (`AddStackExchangeRedisDataProtection`) or every pod restart invalidates
       tokens — worth a comment in `Program.cs` so this isn't rediscovered the hard way.
-- [ ] Each pod holds its own Redis pub/sub subscription, so SSE fan-out works correctly across
+- [x] Each pod holds its own Redis pub/sub subscription, so SSE fan-out works correctly across
       replicas without coordination — every connected client sees every event regardless of which
       pod it landed on.
-- [ ] `CachedSystemCount` caches in Redis (`cache:system:count`), not in process memory, so the
+- [x] `CachedSystemCount` caches in Redis (`cache:system:count`), not in process memory, so the
       60s cache stays coherent across pods. Already true today; keep it that way.
+
+### Phase 3 outcome
+
+`EliteEvents.Web` serves every route in the table above at `localhost:5240`, reading the same
+Redis `EliteEvents.Ingestion` writes. Verified in a browser as well as by curl: the ticker
+prepends server-rendered rows as EDDN events arrive and stays capped at 40, the leaderboard panel
+swaps itself every 15s, and a search submits over `hx-get`, swaps the results card, and updates
+the address bar without a page load.
+
+Decisions taken while building it:
+
+- **`/api/stream` carries both formats on one connection.** The unnamed `message` event still
+  carries the exact JSON the Next ticker consumed, so that contract is untouched; a named `ticker`
+  event carries the rendered `<li>`. The roadmap's `sse-swap="message"` became `sse-swap="ticker"`
+  — one attribute, and it saves running two endpoints and two subscriptions for one feed.
+- **The ticker is seeded from a 40-event per-pod ring buffer**, so a fresh page load shows recent
+  activity instead of an empty box. It is a cache, not session state: two pods may seed slightly
+  different rows and neither needs the other.
+- **~40 lines of JS after all** (`wwwroot/js/ticker.js`): htmx does every swap, but something has
+  to cap the list — a tab left open overnight would otherwise accumulate hundreds of thousands of
+  `<li>`s — and the same file drives the connected/offline dot.
+- **Redis errors no longer reach the page.** The old Blazor pages rendered `ex.Message` straight
+  into the HTML, and a StackExchange.Redis exception message carries the endpoint host, client
+  name and library version. Pages now log the exception and show one generic line.
+- **`HtmlRenderer` needs a scope**, so `TickerFragmentRenderer` holds one `AsyncServiceScope` for
+  the app's lifetime rather than building a renderer per event.
+- **No `UseHttpsRedirection`.** TLS terminates at the proxy and the container only speaks HTTP;
+  HSTS is still emitted in production.
+- `/health/live` and `/health/ready` exist here too, so Phase 4 can wire the same probe shape to
+  both deployments. Readiness is Redis-only, per the Phase 2 note above.
+
+Behaviour differences worth knowing:
+
+- `/api/most-visited` inherits `GetSystemVisitsAsync`'s "score > 1" filter, which the Next query
+  did not have. Systems visited exactly once are omitted from the JSON as well as the UI.
+- Detail pages moved to `/system/{name}` and `/carrier/{id}`; the old paths 301 to them.
 
 ## Phase 4 — Containers and k8s, running side-by-side
 

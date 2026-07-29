@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- Newtonsoft is used for the live ticker wire format only: LiveEvent pins its property
+             names with [JsonProperty], so the SSE frames stay byte-identical to what the Next
+             dashboard published. The JSON API endpoints use System.Text.Json as usual. -->
+        <PackageReference Include="Newtonsoft.Json" Version="$(NewtonsoftJsonVersion)" />
+    </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="../EliteEvents.Eddn/EliteEvents.Eddn.csproj" />
+    </ItemGroup>
+</Project>

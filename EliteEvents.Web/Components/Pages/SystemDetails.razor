@@ -1,0 +1,170 @@
+@page "/system/{SystemName}"
+@inject IDockingReader Reader
+@inject ILogger<SystemDetails> Logger
+
+<PageTitle>@SystemName - Station Details</PageTitle>
+
+<div class="container mt-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/system-search">System Search</a></li>
+            <li class="breadcrumb-item active" aria-current="page">@SystemName</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>System Visitors</h2>
+    </div>
+
+    @if (errorMessage is not null)
+    {
+        <div class="alert alert-danger" role="alert">@errorMessage</div>
+    }
+    else if (stations is null || stations.Count == 0)
+    {
+        <div class="alert alert-info">
+            No docking data found for system: <strong>@SystemName</strong>
+        </div>
+    }
+    else
+    {
+        <div class="card mb-3">
+            <div class="card-header">
+                <h4 class="mb-0">
+                    <a href="https://inara.cz/elite/starsystem/?search=@Uri.EscapeDataString(SystemName)" target="_blank">
+                        @SystemName
+                        <i class="bi bi-box-arrow-up-right small"></i>
+                    </a>
+                </h4>
+                <small class="text-muted">@stations.Count station(s) with recorded dockings</small>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-3">
+                        <div class="card">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Total Dockings</h6>
+                                <h2 class="mb-0">@stations.Sum(s => s.DockingCount)</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Stations</h6>
+                                <h2 class="mb-0">@stations.Count</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Most Popular</h6>
+                                <p class="mb-0 small"><strong>@busiest.StationName</strong></p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Last Activity</h6>
+                                <p class="mb-0 small">@TimeFormat.Ago(stations.Max(s => s.LastSeen))</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover">
+                        <thead>
+                        <tr>
+                            <th>Station Name</th>
+                            <th>Type</th>
+                            <th class="text-end">Total Dockings</th>
+                            <th>Last Seen</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var station in stations.OrderByDescending(s => s.DockingCount))
+                        {
+                            <tr>
+                                <td><strong>@station.StationName</strong></td>
+                                <td><span class="badge bg-secondary">@station.StationType</span></td>
+                                <td class="text-end"><span class="badge bg-primary fs-6">@station.DockingCount</span></td>
+                                <td><small class="text-muted">@TimeFormat.Ago(station.LastSeen)</small></td>
+                            </tr>
+                        }
+                        </tbody>
+                        <tfoot>
+                        <tr class="table-active">
+                            <td colspan="2"><strong>Total</strong></td>
+                            <td class="text-end"><strong>@stations.Sum(s => s.DockingCount)</strong></td>
+                            <td></td>
+                        </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Summary</h5>
+            </div>
+            <div class="card-body">
+                <div class="list-group list-group-flush">
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        Most Popular Station
+                        <span>
+                            <strong>@busiest.StationName</strong>
+                            <span class="badge bg-success ms-2">@busiest.DockingCount dockings</span>
+                        </span>
+                    </div>
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        Most Recent Activity
+                        <span class="text-muted">@TimeFormat.Ago(stations.Max(s => s.LastSeen))</span>
+                    </div>
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        Station Types
+                        <span>@string.Join(", ", stations.Select(s => s.StationType).Distinct())</span>
+                    </div>
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        Average Dockings per Station
+                        <span><strong>@Math.Round(stations.Average(s => s.DockingCount), 1)</strong></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string SystemName { get; set; } = "";
+
+    private IReadOnlyList<StationDockingInfo>? stations;
+    private string? errorMessage;
+
+    private StationDockingInfo busiest => stations!.MaxBy(s => s.DockingCount)!;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        stations = null;
+        errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(SystemName))
+        {
+            errorMessage = "No system name provided";
+            return;
+        }
+
+        try
+        {
+            stations = await Reader.GetSystemDockingAsync(SystemName);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "System detail query failed for {System}", SystemName);
+            errorMessage = UserMessages.DataUnavailable;
+        }
+    }
+}

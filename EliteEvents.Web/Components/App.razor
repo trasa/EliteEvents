@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <base href="/"/>
+    <meta name="description" content="Live galactic activity from the Elite Dangerous Data Network — most-visited systems, station docking, fleet carriers, and a real-time event feed."/>
+    <link rel="stylesheet" href="@Assets["lib/bootstrap/dist/css/bootstrap.min.css"]"/>
+    <link rel="stylesheet" href="@Assets["app.css"]"/>
+    <link rel="stylesheet" href="@Assets["EliteEvents.Web.styles.css"]"/>
+    <link rel="icon" type="image/png" href="favicon.png"/>
+    <HeadOutlet/>
+</head>
+
+<body>
+<Routes/>
+<!-- htmx and its SSE extension are vendored under wwwroot/lib, the same way Bootstrap is —
+     no CDN, so the page works with a strict connect-src and no external dependency at runtime.
+     There is no blazor.web.js: this app has no circuit. -->
+<script src="@Assets["lib/htmx/htmx.min.js"]"></script>
+<script src="@Assets["lib/htmx/sse.js"]"></script>
+</body>
+
+</html>

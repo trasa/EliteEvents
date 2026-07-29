@@ -1,0 +1,207 @@
+@page "/"
+@inject IDockingReader Reader
+@inject ICachedSystemCount SystemCount
+@inject LiveEventHub Hub
+@inject ILogger<Home> Logger
+
+<PageTitle>EDDN Live — Elite Dangerous Galactic Activity</PageTitle>
+
+<div class="container mt-4">
+    <div class="text-center mb-4">
+        <h1 class="display-5 mb-2">EDDN Live</h1>
+        <p class="lead text-muted">
+            Real-time galactic activity from the
+            <a href="https://github.com/EDCD/EDDN" target="_blank" rel="noopener noreferrer">Elite Dangerous Data Network</a>
+        </p>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">Most-Visited Systems</h4>
+                    <small class="text-muted">this week</small>
+                </div>
+                @* Polls itself every 15s, the same refresh the Next dashboard did from JS. The
+                   fragment endpoint returns exactly the markup below, so the swap is seamless. *@
+                @* Both panels share panel-scroll so the row stays balanced however long the
+                   leaderboard gets; each scrolls internally instead of stretching the page. *@
+                <div class="card-body panel-scroll" id="leaderboard"
+                     hx-get="/fragments/leaderboard" hx-trigger="every 15s" hx-swap="innerHTML">
+                    <LeaderboardTable Systems="topSystems" ErrorMessage="@leaderboardError"/>
+                </div>
+                <div class="card-footer">
+                    <a href="/most-visited">Full leaderboard <i class="bi bi-arrow-right"></i></a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card h-100" hx-ext="sse" sse-connect="/api/stream">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">Live Feed</h4>
+                    <small class="text-muted"><span id="sse-status" class="dot off"></span> <span id="sse-status-text">connecting</span></small>
+                </div>
+                <div class="card-body panel-scroll">
+                    @* The server pushes rendered rows on the "ticker" event; htmx prepends them.
+                       The unnamed "message" event on the same stream stays JSON for the API
+                       consumers that predate this app. *@
+                    <ul class="ticker mb-0" id="ticker" sse-swap="ticker" hx-swap="afterbegin">
+                        @foreach (var frame in recentFrames)
+                        {
+                            @((MarkupString)frame.Html)
+                        }
+                    </ul>
+                    @if (recentFrames.Count == 0)
+                    {
+                        <p class="text-muted mb-0" id="ticker-empty">Waiting for events&hellip;</p>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h3 class="card-title mb-3">System Search</h3>
+                    <p class="card-text">
+                        Search for star systems and view docking statistics for stations within them.
+                        See how frequently stations that you've created are visited by commanders across the galaxy.
+                        @if (systemCount is not null)
+                        {
+                            <text>(Known Systems: <strong>~ @systemCount</strong>)</text>
+                        }
+                    </p>
+                    <a href="/system-search" class="btn btn-primary">Search Systems</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h3 class="card-title mb-3">Fleet Carrier Search</h3>
+                    <p class="card-text">
+                        Look up individual fleet carriers by their ID and track their visitor history over time.
+                        View day-by-day docking counts of visitors to your carrier.
+                    </p>
+                    <a href="/carrier-search" class="btn btn-primary">Search Carriers</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <h3 class="card-title mb-3">About This Site</h3>
+                    <p class="mb-0">
+                        This analytics platform tracks commander docking events throughout the Elite Dangerous galaxy
+                        via the <a href="https://eddn-realtime.space/">Elite: Dangerous Data Network</a> (EDDN).
+                        Data is stored in a Redis database for 30 days since last update. Systems and fleet carriers
+                        without updates for 30 days from EDDN are automatically purged to conserve storage.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Credits</h5>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6 class="text-muted mb-2">UI Framework</h6>
+                            <ul class="list-unstyled small">
+                                <li>
+                                    <a href="https://getbootstrap.com/" target="_blank" class="text-decoration-none">Bootstrap 5</a>
+                                    - CSS Framework
+                                </li>
+                                <li>
+                                    <a href="https://htmx.org/" target="_blank" class="text-decoration-none">htmx</a>
+                                    - Hypermedia interactions
+                                </li>
+                                <li>
+                                    <a href="https://edassets.org/" target="_blank" class="text-decoration-none">Elite Dangerous Assets</a>
+                                    - Fonts and Images
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted mb-2">Technology</h6>
+                            <ul class="list-unstyled small">
+                                <li>ASP.NET Core Razor Components - Web Framework</li>
+                                <li>Redis - Data Storage</li>
+                                <li>ZeroMQ - Message Bus</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-12">
+                            <h6 class="text-muted mb-2">External Resources</h6>
+                            <ul class="list-unstyled small">
+                                <li>
+                                    <a href="https://inara.cz/" target="_blank" class="text-decoration-none">Inara</a>
+                                    - Elite Dangerous Database &amp; Community
+                                </li>
+                                <li>
+                                    <a href="https://github.com/EDCD/EDDN" target="_blank" class="text-decoration-none">Elite Dangerous Data Network (EDDN)</a>
+                                    - Realtime Data Feed
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                    <hr class="my-3">
+                    <p class="small text-muted mb-0">
+                        &copy; 2026 - <a href="https://www.linkedin.com/in/tonyrasa/">Tony Rasa</a>.
+                        Not run by or affiliated in any way with <a href="http://www.frontier.co.uk/">Frontier Developments plc</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@* The only client-side script on the site: cap the ticker's length so a tab left open overnight
+   doesn't accumulate an unbounded DOM, and reflect the SSE connection state in the header. The
+   swap itself is pure htmx. *@
+<script src="@Assets["js/ticker.js"]"></script>
+
+@code {
+    private IReadOnlyList<SystemVisitInfo>? topSystems;
+    private string? leaderboardError;
+    private long? systemCount;
+    private IReadOnlyList<TickerFrame> recentFrames = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        recentFrames = Hub.RecentFrames();
+
+        // Redis being down must degrade the page, not 500 it — the old Blazor home page called
+        // the system count with no try/catch and returned a 500 for the whole route.
+        try
+        {
+            topSystems = await Reader.GetSystemVisitsAsync(topN: FragmentDefaults.LeaderboardSize);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Leaderboard query failed");
+            leaderboardError = UserMessages.DataUnavailable;
+        }
+
+        try
+        {
+            systemCount = await SystemCount.GetSystemCountAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "System count query failed");
+            systemCount = null;
+        }
+    }
+}

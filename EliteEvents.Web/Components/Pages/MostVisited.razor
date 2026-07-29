@@ -1,0 +1,39 @@
+@page "/most-visited"
+@inject IDockingReader Reader
+@inject ILogger<MostVisited> Logger
+
+<PageTitle>Most-Visited Systems</PageTitle>
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Most-Visited Systems</h2>
+        <small class="text-muted">Reset every week at 07:30 Thursday (UTC), during system maintenance.</small>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header">
+            <h4 class="mb-0">Recently Visited Systems</h4>
+        </div>
+        <div class="card-body">
+            <LeaderboardTable Systems="systems" ErrorMessage="@errorMessage"/>
+        </div>
+    </div>
+</div>
+
+@code {
+    private IReadOnlyList<SystemVisitInfo>? systems;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            systems = await Reader.GetSystemVisitsAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Leaderboard query failed");
+            errorMessage = UserMessages.DataUnavailable;
+        }
+    }
+}

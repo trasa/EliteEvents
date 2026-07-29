@@ -1,0 +1,48 @@
+@* Results card for a fleet-carrier search; see SystemResults for how it is used. *@
+
+@if (ErrorMessage is not null)
+{
+    <div class="alert alert-danger" role="alert">@ErrorMessage</div>
+}
+else if (string.IsNullOrWhiteSpace(Query))
+{
+    <!-- nothing searched for yet -->
+}
+else if (Carriers is null || Carriers.Count == 0)
+{
+    <div class="alert alert-info mt-3">
+        No carriers found matching: <strong>@Query</strong>
+    </div>
+}
+else
+{
+    <div class="card mt-3">
+        <div class="card-header">
+            <h4 class="mb-0">Matching Carriers</h4>
+            <small class="text-muted">Found @Carriers.Count carrier(s) matching "@Query"</small>
+        </div>
+        <div class="card-body">
+            <div class="list-group">
+                @foreach (var carrier in Carriers)
+                {
+                    <a href="/carrier/@Uri.EscapeDataString(carrier)"
+                       class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="mb-1">@carrier</h5>
+                            <small class="text-muted">Click to view visitor details</small>
+                        </div>
+                        <i class="bi bi-chevron-right"></i>
+                    </a>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string? Query { get; set; }
+
+    [Parameter] public IReadOnlyList<string>? Carriers { get; set; }
+
+    [Parameter] public string? ErrorMessage { get; set; }
+}

@@ -1,0 +1,26 @@
+@* One row of the live feed. Rendered server-side both for the rows a page ships with and for
+   every row pushed over SSE, so the two can never drift apart. *@
+
+<li class="ticker-row">
+    <span class="tag @(IsJump ? "jump" : "dock")">@(IsJump ? "jump" : Event.Type)</span>
+    <span class="ticker-detail">
+        @if (!string.IsNullOrEmpty(Event.System))
+        {
+            <a href="/system/@Uri.EscapeDataString(Event.System)">@Event.System</a>
+        }
+        else
+        {
+            <span>?</span>
+        }
+        @if (!string.IsNullOrEmpty(Event.Station))
+        {
+            <span class="text-muted">&middot; @Event.Station</span>
+        }
+    </span>
+</li>
+
+@code {
+    [Parameter] [EditorRequired] public required LiveEvent Event { get; set; }
+
+    private bool IsJump => Event.Type == LiveEvent.FsdJumpType;
+}

@@ -1,0 +1,64 @@
+@page "/carrier-search"
+@inject IDockingReader Reader
+@inject NavigationManager Navigation
+@inject ILogger<CarrierSearch> Logger
+
+<PageTitle>Fleet Carriers</PageTitle>
+
+<div class="container mt-4">
+    <h2>Fleet Carrier Search</h2>
+
+    <div class="row mt-4">
+        <div class="col-md-8">
+            <form class="input-group mb-3" action="/carrier-search" method="get"
+                  hx-get="/fragments/carrier-search" hx-target="#search-results" hx-swap="innerHTML">
+                <input type="text" class="form-control" name="q" value="@Query"
+                       placeholder="Enter carrier ID or partial match (ex. MFV or MFV-99)" required/>
+                <button class="btn btn-primary" type="submit">Search</button>
+            </form>
+            <small class="text-muted">
+                Enter full carrier ID (e.g., MFV-99Z) or partial match (e.g., MFV)
+            </small>
+        </div>
+    </div>
+
+    <div id="search-results">
+        <CarrierResults Query="@Query" Carriers="matches" ErrorMessage="@errorMessage"/>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "q")]
+    public string? Query { get; set; }
+
+    private IReadOnlyList<string>? matches;
+    private string? errorMessage;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        matches = null;
+        errorMessage = null;
+
+        var query = Query?.Trim();
+        if (string.IsNullOrEmpty(query))
+        {
+            return;
+        }
+
+        try
+        {
+            matches = await Reader.GetMatchingCarriersAsync(query);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Carrier search failed for {Query}", query);
+            errorMessage = UserMessages.DataUnavailable;
+            return;
+        }
+
+        if (matches.Count == 1)
+        {
+            Navigation.NavigateTo($"/carrier/{Uri.EscapeDataString(matches[0])}");
+        }
+    }
+}

@@ -1,0 +1,126 @@
+@page "/carrier/{CarrierId}"
+@inject IDockingReader Reader
+@inject ILogger<CarrierDetails> Logger
+
+<PageTitle>@CarrierId - Details</PageTitle>
+
+<div class="container mt-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/carrier-search">Carrier Search</a></li>
+            <li class="breadcrumb-item active" aria-current="page">@CarrierId</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Fleet Carrier Visitors</h2>
+    </div>
+
+    @if (errorMessage is not null)
+    {
+        <div class="alert alert-danger" role="alert">@errorMessage</div>
+    }
+    else if (days is null || days.Count == 0)
+    {
+        <div class="alert alert-info">
+            No docking data found for carrier: <strong>@CarrierId</strong>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0">
+                    <a href="https://inara.cz/elite/station/?search=@Uri.EscapeDataString(CarrierId)" target="_blank">
+                        @CarrierId
+                        <i class="bi bi-box-arrow-up-right small"></i>
+                    </a>
+                </h4>
+                <small class="text-muted">@days.Count day(s) of docking data</small>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Total Visitors</h6>
+                                <h2 class="mb-0">@days.Sum(d => d.DockingCount)</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Days Active</h6>
+                                <h2 class="mb-0">@days.Count</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Avg. per Day</h6>
+                                <h2 class="mb-0">@Math.Round(days.Average(d => d.DockingCount), 1)</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-hover table-dark">
+                        <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th class="text-end">Visitors</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var day in days.OrderByDescending(d => d.Date))
+                        {
+                            <tr>
+                                <td><strong>@day.Date.ToString("MMM dd, yyyy")</strong></td>
+                                <td class="text-end"><span class="badge bg-primary fs-6">@day.DockingCount</span></td>
+                            </tr>
+                        }
+                        </tbody>
+                        <tfoot>
+                        <tr class="table-active">
+                            <td><strong>Total</strong></td>
+                            <td class="text-end"><strong>@days.Sum(d => d.DockingCount)</strong></td>
+                        </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string CarrierId { get; set; } = "";
+
+    private IReadOnlyList<CarrierDockingInfo>? days;
+    private string? errorMessage;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        days = null;
+        errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(CarrierId))
+        {
+            errorMessage = "No carrier ID provided";
+            return;
+        }
+
+        try
+        {
+            days = await Reader.GetCarrierDockingAsync(CarrierId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Carrier detail query failed for {Carrier}", CarrierId);
+            errorMessage = UserMessages.DataUnavailable;
+        }
+    }
+}
