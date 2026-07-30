@@ -26,7 +26,8 @@ isn't deployed.
 - **`operator/`** — a Kubebuilder/controller-runtime operator (Go, its own module) managing
   `kind: FeedListener` in group `elite.meancat.com`. It reconciles a declared EDDN subscription
   into the ConfigMap, Service and per-shard Deployments that `k8s/20-ingestion.yaml` used to
-  spell out by hand. **Built but not yet cut over** — see below.
+  spell out by hand. **This is how ingestion is deployed** — `20-ingestion.yaml` is retained only
+  as a rollback target and is not applied.
 - **`EliteEvents.JournalWeb`** — a separate/legacy Blazor app that reads local Elite Dangerous
   journal files via `EliteJournalReader` and uses SignalR. **Not containerised, not deployed.**
   Don't assume changes here affect production.
@@ -151,9 +152,15 @@ Two cross-language contracts are easy to break silently:
 The controller never speaks Redis: `RedisKeys` stays the only definition of the keyspace, which is
 why teardown runs the app's own image rather than deleting keys by name from Go.
 
-**Cutover status:** `k8s/25-feedlistener.yaml` exists but is deliberately **not** in
-`kustomization.yaml`; listing it alongside `20-ingestion.yaml` would run two writers. The runbook
-is in `k8s/README.md`.
+**This is how ingestion runs in production**, since 2026-07-30. `k8s/25-feedlistener.yaml` is the
+deployed resource and is in `kustomization.yaml`; `k8s/20-ingestion.yaml` is kept but **no longer
+referenced**, purely as the rollback target documented in `k8s/README.md`. Never list both — two
+subscribers on one Redis double-count every docking.
+
+**The ingestion image tag lives in `25-feedlistener.yaml`, not `kustomization.yaml`.**
+`./deploy-k8s <tag>` rewrites the `images:` block, which the FeedListener does not read, so
+upgrading ingestion now means editing `spec.image`. The operator's own deployed tag is recorded in
+`operator/config/manager/kustomization.yaml`, written by `make deploy`.
 
 ## Health endpoints
 
