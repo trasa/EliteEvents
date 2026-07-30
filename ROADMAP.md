@@ -405,6 +405,30 @@ What went wrong on the way, worth remembering:
   pinned. It caused no harm here (both tags were the same digest) but it defeats immutable tags.
   `./deploy-k8s <tag>` is now the documented path for config changes too.
 
+  **This is not a theoretical hazard.** On 2026-07-30, while diagnosing the StatefulSet noise
+  below, a handful of bare `kubectl apply -k k8s/` calls rolled production off the pinned tag and
+  back onto `:latest` — exactly as documented, and still surprising in the moment. Re-pinning with
+  `kubectl set image` restored it. **Still open:** the real fix is to stop mutating the
+  Deployments after apply — put the tag into the `images:` transformer that `deploy-k8s` renders,
+  so `apply` is the whole deploy and a bare apply can't disagree with it.
+
+- **`kubectl apply` reported `statefulset.apps/redis configured` on every run** against an object
+  that had never changed — generation stayed at 1 from creation. Fixed 2026-07-30 by spelling out
+  the four fields the API server defaults inside `volumeClaimTemplates` (`apiVersion`, `kind`,
+  `spec.volumeMode`, `status.phase`).
+
+  `volumeClaimTemplates` is an *atomic* list in a strategic-merge patch, so kubectl replaces the
+  whole list unless the manifest deep-equals the stored copy; the defaults meant it never did, and
+  kubectl re-sent the list forever. Two things made this slow to pin down: `kubectl diff` shows
+  **nothing** for the object (it normalises the defaults away), so only the `-v=8` PATCH body
+  reveals the cause; and `--dry-run=server` can never show the fixed state, because after any
+  manifest edit the first apply is legitimately "configured" — it has to rewrite
+  `last-applied-configuration`. The settled state only appears on a *second real* apply.
+
+  Server-side apply also fixes it, and was rejected: it prints `serverside-applied` for every
+  object unconditionally, which removes the changed/unchanged signal this was trying to recover,
+  and it conflicts with the `kubectl set image` in `deploy-k8s` over ownership of the image field.
+
 ### Decommissioned — 2026-07-30
 
 The droplet (`elite-visitor-web`, 164.92.109.111) and the managed Valkey

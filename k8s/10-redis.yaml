@@ -142,12 +142,34 @@ spec:
         - name: rendered-config
           emptyDir:
             medium: Memory
+  # Everything below the storage request is here to keep `kubectl apply` honest, not because the
+  # cluster needs it.
+  #
+  # volumeClaimTemplates is an *atomic* list in a strategic-merge patch — kubectl replaces the
+  # whole list unless the manifest deep-equals the stored copy. The API server defaults
+  # apiVersion, kind, spec.volumeMode and status.phase, so a manifest that omits them never
+  # matches, and every single apply reported "statefulset.apps/redis configured" against an
+  # object that had not changed since it was created. That made the apply summary useless for
+  # spotting real drift, which is the only reason to read it.
+  #
+  # Spelling the defaults out makes apply report "unchanged". `status` in a manifest is admittedly
+  # odd — it is inert here because this is a *template*, not a live PVC, and the API server
+  # neither reads nor updates it — but it is genuinely required: with the other three present and
+  # this block absent, apply still reported "configured".
+  #
+  # None of this can mutate anything. volumeClaimTemplates is immutable after creation, and the
+  # StatefulSet stayed at generation 1 with redis-0 unrestarted across the applies that proved it.
   volumeClaimTemplates:
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: data
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName: do-block-storage
+        volumeMode: Filesystem
         resources:
           requests:
             storage: 5Gi
+      status:
+        phase: Pending
