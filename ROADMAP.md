@@ -4,6 +4,11 @@ Status: **Complete.** `elite.meancat.com` serves from Kubernetes; the droplet an
 Valkey were destroyed on 2026-07-30, so there is no longer a rollback path to the old stack. All
 three optional Phase 6 items are done as well.
 
+**Phase 7** (also 2026-07-30) is a later addition, not part of the original migration: ingestion
+moved from a hand-written Deployment to a `FeedListener` custom resource managed by an operator in
+`operator/`. The two-container topology below is unchanged — it is how ingestion is *scheduled*
+that differs.
+
 > **Do not deploy the droplet stack from this branch.** `EliteEvents.Visitors` no longer ingests —
 > `Dockerfile` / `build-image` / `docker-compose.yaml` still build and run only that project, so
 > pushing the image from here would leave production with a web tier and no writer. Containers are
@@ -544,6 +549,110 @@ wire. Ask for a page small enough for the prefix pass to fill and the fallback n
 
    Caveat: `dotnet test` builds `EliteEvents.Eddn` in Debug and therefore runs the NSwag target,
    so it needs eddn.edcd.io like any other Debug build. The tests themselves touch nothing.
+
+---
+
+## Phase 7 — the FeedListener operator
+
+Ingestion moves from a hand-written Deployment to a declared resource, reconciled by a
+Kubebuilder/controller-runtime operator in `operator/` (Go, its own module).
+
+- [x] Scaffold `operator/`: `elite.meancat.com/v1alpha1`, `kind: FeedListener`.
+- [x] Reconcile into a ConfigMap, a Service, and one Deployment per shard, all owner-referenced.
+- [x] Shard the subscription (`MessageShardFilter`, `EddnOptions.ShardIndex/ShardCount`).
+- [x] `/health/stream` on Ingestion; conditions `Available` / `Progressing` / `Streaming` / `Degraded`.
+- [x] Finalizer with an ordered teardown and a drain Job (`--purge-indexes` → `SearchIndexPurger`).
+- [x] Cut production over — 2026-07-30. `k8s/20-ingestion.yaml` retained, unreferenced, as the
+      rollback target.
+
+### Why an operator here and not `kind: Thing`
+
+The honest test for an operator is whether it enforces something a Deployment cannot state. Three
+things qualified, and each one came from an existing constraint rather than being invented for the
+exercise:
+
+**The consumers are not interchangeable.** `EddnStream` calls `SubscribeToAnyTopic()` because EDDN
+frames carry no topic, so every subscriber receives every message. That is why the old Deployment
+was pinned to `replicas: 1` with `strategy: Recreate` — two subscribers double-count every docking.
+So `spec.consumers` could not mean replicas. It means *shards*: each pod gets a distinct
+`Eddn__ShardIndex` and drops what doesn't hash to it, which needs one Deployment per shard at
+`replicas: 1`, because a Deployment gives every replica an identical pod spec. Keeping that
+partition exhaustive and non-overlapping across scale-up, scale-down and rollout is the
+controller's core invariant.
+
+The pruning half matters more than it looks. Scaling 4 → 2 leaves shards 2 and 3 running, still
+subscribed, still writing — and owner-reference GC will never touch them, because their owner is
+alive and well. Only the controller knows they left the partition.
+
+**Deleting the resource orphans Redis state.** `index:systems` / `index:carriers` carry no TTL by
+design: `ZRANGEBYLEX` needs every member at score 0, so the index can't be pruned by score, and a
+TTL on the key would drop the whole thing. They stay correct only while a listener reconciles them.
+That state is outside the Kubernetes object graph, so GC cannot reach it — which is exactly a
+finalizer's job description, and much more honest than "unsubscribe from the relay." EDDN has no
+server-side subscription registry; closing the socket *is* the teardown, and `SIGKILL` does it.
+
+**Health is not readiness.** A listener whose pods are all `Ready` can be receiving nothing.
+`Available` and `Streaming` are separate conditions for that reason.
+
+### Decisions made
+
+| Decision | Choice |
+|---|---|
+| Repo layout | `operator/` in this repo, own `go.mod`. The CRD and the app it schedules share a contract; splitting repos would let them drift |
+| Versioning | Same nbgv tag as the .NET images — "which operator goes with which app" has to be answerable |
+| Shard assignment | One Deployment per shard, not a StatefulSet. Puts the invariant in the controller rather than making the app parse its own hostname ordinal |
+| Drain mechanism | A Job running the **ingestion image** with `--purge-indexes`, not go-redis in the controller. `RedisKeys` stays the only definition of the keyspace |
+| Status source | Poll each pod's `/health/stream` by pod IP. A ClusterIP would answer from an arbitrary shard, which is the wrong question |
+| Failed drain | Release the finalizer anyway, loudly. An unsatisfiable finalizer wedges the namespace, which is worse than stale keys |
+
+### What sharding does and does not buy
+
+Because there is no topic frame, filtering happens *after* decompression: every consumer still
+receives and unzips the entire firehose. Sharding parallelises handler work only. At EDDN volumes
+one consumer is nowhere near strained, so `consumers` stays at 1 in production and the knob exists
+because the partition invariant is what justifies the operator — not because throughput needed it.
+
+### Phase 7 outcome — 2026-07-30
+
+Cut over cleanly. The rollout was split in two on purpose — `./deploy-k8s` first, to prove the new
+ingestion binary healthy on the *old* Deployment, then the switch to the operator — so a failure
+would have named itself. The new image defaults to `ShardCount=1`, so step one was a no-op by
+construction.
+
+Worth remembering:
+
+- **Raw FNV-1a sent 100% of the feed to one shard at every power-of-two consumer count.**
+  Multiplying by an odd prime leaves the low bits untouched, so the digest's lowest bit is just a
+  parity of the input bytes; `% 2`, `% 4`, `% 8` and `% 16` read exactly the bits the hash never
+  mixed. Only prime shard counts worked — and 2, 4, 8, 16 are the counts anyone would pick. Fixed
+  with a Murmur3 `fmix32` avalanche; the digest is now pinned by test literals, because changing
+  the hash during a rolling update would repartition the feed mid-flight.
+
+  The partition was still *exactly-once* the whole time, so every correctness test passed. Only
+  the distribution test failed. That test was written as an afterthought about efficiency and
+  turned out to be the one that mattered.
+
+- **The drain pod deadlocked the finalizer.** It carried the standard object labels, so it matched
+  the consumer selector — and `stopConsumers` waits for that selector to return no pods. It was
+  waiting for itself. Caught before it ran anywhere; pinned by a test.
+
+- **`TimeSpan` rejects Go's duration format.** `Duration.String()` gives `2m0s`; .NET options
+  binding would have silently fallen back to the default and ignored `reconnectAfterSilence`
+  entirely. Rendered as `HH:MM:SS` instead.
+
+- **The manager needed `imagePullSecrets` spelled out.** DOKS syncs the `meancat` secret into every
+  namespace and attaches it to each *default* ServiceAccount, but the manager runs as
+  `controller-manager` — a guaranteed `ImagePullBackOff` otherwise. Same reason `20-ingestion.yaml`
+  and `30-web.yaml` name it explicitly.
+
+- **`./deploy-k8s <tag>` no longer upgrades ingestion.** It rewrites the `images:` block in
+  `kustomization.yaml`, which the FeedListener does not read. The ingestion tag now lives in
+  `spec.image`. Run `deploy-k8s` alone and the web tier moves while ingestion silently stays put.
+
+- **Toolchain.** Kubebuilder v4.15 needs Go ≥ 1.23 and the machine had 1.21. `go.mod` requiring
+  1.26 plus `GOTOOLCHAIN=auto` covers builds, but coverage instrumentation then looks for `covdata`
+  in the older `GOROOT` and fails — so the operator `Makefile` pins `GOTOOLCHAIN=go1.26.5` rather
+  than changing the developer's global `go env`.
 
 ---
 
