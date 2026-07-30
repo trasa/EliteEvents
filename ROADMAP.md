@@ -1,6 +1,7 @@
 # Roadmap — merge Visitors + Dashboard into one ASP.NET/htmx app
 
-Status: **Phase 4 complete except provisioning** (uncommitted). Branch: `blazor`.
+Status: **Phase 4 complete** — the k8s stack is live at https://k8s.meancat.com, running side by
+side with the droplets. Branch: `blazor`. Phase 5 (cutover and teardown) is next.
 
 > **Do not deploy the droplet stack from this branch.** `EliteEvents.Visitors` no longer ingests —
 > `Dockerfile` / `build-image` / `docker-compose.yaml` still build and run only that project, so
@@ -279,8 +280,7 @@ DOKS mounts the pull secret itself.
       `ConnectionStrings__Redis` env var handles with no code change.
 - [x] Ingress (replaces Caddy) + TLS, on a test hostname first — `k8s.meancat.com`, ingress-nginx
       plus cert-manager.
-- [ ] **Bring the stack up via `doctl`** — not done. The stored `doctl` token 401s, and creating
-      the registry, cluster and load balancer bills roughly $42/mo. Runbook: `k8s/README.md`.
+- [x] **Bring the stack up via `doctl`** — done 2026-07-30. Live at `https://k8s.meancat.com`.
 
 The droplets keep running untouched throughout this phase, on their own managed Redis.
 
@@ -322,16 +322,54 @@ Decisions:
 - The old root `Dockerfile` and the droplet `build-image` targets still work — `.dockerignore`
   deliberately keeps `EliteEvents.Visitors` in the context until Phase 5 retires that path.
 
-**Before provisioning:** `doctl auth init`, then follow `k8s/README.md` in order. DNS for
-`k8s.meancat.com` has to resolve to the load balancer before cert-manager can complete HTTP-01,
-and the issuer annotation should point at `letsencrypt-staging` for the first attempt.
+### Provisioned 2026-07-30
+
+Live at **https://k8s.meancat.com**, everything in **sfo3** alongside the existing droplet and
+managed Valkey.
+
+| Resource | Identifier |
+|---|---|
+| Registry | `meancat` (Basic, sfo3) — account-level, cannot be assigned to a project |
+| Cluster | `elite`, `f9d0a98f-91cb-42ee-9bc4-4814325bec84`, 1.36.0-do.3, 2 × `s-1vcpu-2gb`, **HA control plane false** |
+| Load balancer | `elite-k8s-lb`, `2d76117d-…`, 164.90.244.224 |
+| DNS | `k8s.meancat.com` A → 164.90.244.224, TTL 300 |
+| Project | everything except the registry assigned to `elite-dangerous` (`2ca85a53-…`) |
+
+Verified end to end: all pages and JSON APIs 200 over valid TLS, SSE streaming live EDDN frames
+through nginx, in-cluster Redis filling from the firehose, ticker and 15s leaderboard poll both
+working in a real browser.
+
+Two things provisioning taught us that the manifests were wrong about:
+
+- **The DOCR pull secret is named after the registry** — `meancat`, not `registry-meancat`. DOKS
+  syncs it into every namespace, including ones created later, and attaches it to each default
+  ServiceAccount. The wrong name would have produced `ImagePullBackOff` with an authentication
+  error rather than anything pointing at the real cause.
+- **`--ha=false` had to be explicit.** Kubernetes 1.36+ defaults the control plane to HA, which is
+  $40/mo — more than the rest of the stack combined.
+
+And one reporting quirk worth remembering: `doctl projects resources list` does **not** show
+DOKS-managed load balancers, so an assigned LB appears in no project at all. Check `project_id` on
+the load balancer itself.
+
+Certificates were issued against `letsencrypt-staging` first, confirmed, then reissued from
+`letsencrypt-prod` by deleting the `elite-tls` secret — the annotation in `40-ingress.yaml` is now
+prod.
 
 ## Phase 5 — Cut over and delete
 
 - [ ] Point `elite.meancat.com` at the k8s ingress.
 - [ ] Redirect `elite-visitors.meancat.com` → `elite.meancat.com`.
 - [ ] Tear down the droplet stack (`docker-compose.yaml`, `Caddyfile`, `deploy-stack`,
-      `.github/workflows/deploy.yml`) once the k8s stack has proven itself.
+      `.github/workflows/deploy.yml`, the root `Dockerfile`) once the k8s stack has proven itself.
+- [ ] **Destroy the managed Valkey** — `elite-visitors-redis`, `db-s-1vcpu-1gb`, sfo3,
+      `160d042a-c022-434d-8c90-3932d7e1157c`, $15/mo. The k8s stack never touches it; its only
+      clients are the droplet containers, so it goes *after* the droplet is gone, not before.
+      ```bash
+      doctl databases delete 160d042a-c022-434d-8c90-3932d7e1157c
+      ```
+      In-cluster Redis replaces it outright: the data is 30-day TTL'd and disposable, so there is
+      nothing to migrate and a managed database was always more durability than this needs.
 - [ ] Delete `EliteEvents.Visitors/` and `EliteEvents.Dashboard/`; update `EliteEvents.sln`.
 - [ ] Rewrite `CLAUDE.md` for the new topology, including the corrections listed below.
 

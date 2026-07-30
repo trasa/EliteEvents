@@ -10,7 +10,7 @@ never share data, so both can ingest from EDDN at the same time without double-c
 
 | Resource | Monthly |
 |---|---|
-| DOKS control plane | free |
+| DOKS control plane (non-HA) | free |
 | 2 × `s-1vcpu-2gb` nodes | $24 |
 | Load balancer (ingress-nginx) | $12 |
 | Container registry, Basic tier | $5 |
@@ -19,59 +19,98 @@ never share data, so both can ingest from EDDN at the same time without double-c
 
 The droplet stack keeps running alongside until Phase 5, so expect to pay for both during cutover.
 
+> **`--ha=false` is not optional.** On Kubernetes 1.36+ `doctl` defaults the control plane to
+> highly-available, which adds **$40/mo** — more than everything above combined. A single control
+> plane failing stops you changing the cluster; it does not stop the pods serving.
+
+Everything goes in **sfo3**, where the existing droplet and managed Valkey already live.
+
+## Environment
+
+```bash
+PROJECT=2ca85a53-3472-4ba6-8ccf-d756be2281f2   # the elite-dangerous DO project
+REGION=sfo3
+CLUSTER=elite
+REGISTRY=meancat
+```
+
+Resources are assigned to the `elite-dangerous` project for budget tracking. The container
+registry is the one exception: DOCR is account-level, has no project URN, and always bills outside
+any project.
+
 ## One-time provisioning
 
 ```bash
-doctl auth init                       # the stored token expires; re-run when API calls 401
+doctl auth init                       # tokens expire; re-run when API calls start returning 401
 
-REGION=nyc3
-CLUSTER=elite
-REGISTRY=meancat
-
-# 1. Container registry (Basic: 5 GB, unlimited repos). The name is globally unique.
+# 1. Container registry. Basic tier: 5 repositories, 5 GB. The name is globally unique across
+#    DigitalOcean and appears in every image path, so it is effectively permanent.
 doctl registry create "$REGISTRY" --subscription-tier basic --region "$REGION"
 
-# 2. Cluster.
+# 2. Cluster. Roughly five minutes.
 doctl kubernetes cluster create "$CLUSTER" \
   --region "$REGION" \
   --version latest \
+  --ha=false \
   --node-pool "name=pool-1;size=s-1vcpu-2gb;count=2;auto-scale=false" \
   --wait
 
-# kubeconfig is merged and made current by the create; to fetch it again later:
+# kubeconfig is merged and made the current context by the create; to fetch it again later:
 doctl kubernetes cluster kubeconfig save "$CLUSTER"
 
-# 3. Let the cluster pull from the registry. This creates the `registry-meancat` pull secret and
-#    propagates it to namespaces, which is the name the Deployments reference.
+# 3. Put the cluster in the project. There is no --project-id on cluster create.
+CLUSTER_ID=$(doctl kubernetes cluster get "$CLUSTER" --format ID --no-header)
+doctl projects resources assign "$PROJECT" --resource="do:kubernetes:$CLUSTER_ID"
+
+# 4. Let the cluster pull from the registry. This creates a dockerconfigjson secret named after
+#    the registry — `meancat`, not `registry-meancat` — syncs it into every namespace including
+#    ones created later, and adds it to each default ServiceAccount. The Deployments name it
+#    explicitly rather than relying on the ServiceAccount.
 doctl kubernetes cluster registry add "$CLUSTER"
 
-# 4. Ingress controller. Provisions the DO load balancer.
+# 5. Ingress controller. Provisions the DO load balancer — naming it here makes it findable below.
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm repo update
 helm install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx --create-namespace \
-  --set controller.publishService.enabled=true
+  --set controller.publishService.enabled=true \
+  --set controller.service.annotations."service\.beta\.kubernetes\.io/do-loadbalancer-name"=elite-k8s-lb
 
-# 5. cert-manager for Let's Encrypt.
+# Wait for DigitalOcean to finish provisioning it (a few minutes), then put it in the project too.
+kubectl -n ingress-nginx get svc ingress-nginx-controller -w
+LB_ID=$(doctl compute load-balancer list --format ID,Name --no-header | awk '$2=="elite-k8s-lb"{print $1}')
+doctl projects resources assign "$PROJECT" --resource="do:loadbalancer:$LB_ID"
+
+# Verify from the load balancer, not the project: `doctl projects resources list` does not report
+# DOKS-managed load balancers, so an assigned LB still shows up nowhere in that listing.
+doctl compute load-balancer get "$LB_ID" -o json | grep project_id
+
+# 6. cert-manager for Let's Encrypt.
 helm repo add jetstack https://charts.jetstack.io
 helm repo update
 helm install cert-manager jetstack/cert-manager \
   --namespace cert-manager --create-namespace \
   --set crds.enabled=true
 
-# 6. Let's Encrypt issuers. Cluster-scoped, so they are applied here rather than being part of
+# 7. Let's Encrypt issuers. Cluster-scoped, so they are applied here rather than being part of
 #    the app's kustomization.
 kubectl apply -f k8s/cluster-issuer.yaml
 ```
 
 ### DNS
 
+meancat.com is hosted at DigitalOcean, so the record can be created from the CLI:
+
 ```bash
-kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+LB_IP=$(kubectl -n ingress-nginx get svc ingress-nginx-controller \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+doctl compute domain records create meancat.com \
+  --record-type A --record-name k8s --record-data "$LB_IP" --record-ttl 300
 ```
 
-Point an A record for `k8s.meancat.com` at that IP. cert-manager cannot issue until the record
-resolves — the HTTP-01 challenge is served through this same ingress.
+cert-manager cannot issue until that resolves — the HTTP-01 challenge is served through this same
+ingress.
 
 ### Redis password
 
@@ -95,6 +134,28 @@ doctl registry login
 ./build-image            # both images, linux/amd64, tagged from nbgv
 ./push-image
 ./deploy-k8s "$(cat .image-version)"
+
+kubectl -n elite get pods -o wide
+
+# The Redis PVC creates a DO block-storage volume; add it to the project as well.
+VOL_ID=$(doctl compute volume list --format ID,Name --no-header | awk '/pvc-/{print $1}')
+doctl projects resources assign "$PROJECT" --resource="do:volume:$VOL_ID"
+```
+
+### First certificate
+
+Issue against staging before production — Let's Encrypt's rate limits punish a misconfigured
+HTTP-01 loop, and a staging failure costs nothing:
+
+```bash
+# in k8s/40-ingress.yaml: cert-manager.io/cluster-issuer: letsencrypt-staging
+kubectl apply -k k8s/
+kubectl -n elite describe certificate elite-tls     # watch for "Certificate issued successfully"
+
+# then switch the annotation back to letsencrypt-prod and force a fresh issuance
+kubectl -n elite delete secret elite-tls
+kubectl apply -k k8s/
+kubectl -n elite get certificate -w
 ```
 
 Or run the **Build and Push Images** workflow followed by **Deploy to k8s.meancat.com**, which

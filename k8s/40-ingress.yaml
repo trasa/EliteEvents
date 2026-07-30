@@ -3,6 +3,9 @@ kind: Ingress
 metadata:
   name: elite
   annotations:
+    # Staging issued successfully on 2026-07-30, proving the HTTP-01 path; switched to production.
+    # If this ever needs re-testing, flip back to letsencrypt-staging and delete the elite-tls
+    # secret — production rate limits are unforgiving of a failing challenge loop.
     cert-manager.io/cluster-issuer: letsencrypt-prod
     # /api/stream is Server-Sent Events. Without these the proxy buffers the stream and holds
     # frames back, and cuts the connection after its default 60s read timeout — the ticker would

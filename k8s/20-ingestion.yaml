@@ -16,8 +16,10 @@ spec:
       labels:
         app: ingestion
     spec:
+      # DOKS's registry integration names this secret after the registry itself and syncs a copy
+      # into every namespace; it is not called registry-<name>.
       imagePullSecrets:
-        - name: registry-meancat
+        - name: meancat
       securityContext:
         runAsNonRoot: true
       containers:

@@ -19,8 +19,9 @@ spec:
       labels:
         app: web
     spec:
+      # See the note in 20-ingestion.yaml: DOKS names this after the registry.
       imagePullSecrets:
-        - name: registry-meancat
+        - name: meancat
       securityContext:
         runAsNonRoot: true
       affinity:
