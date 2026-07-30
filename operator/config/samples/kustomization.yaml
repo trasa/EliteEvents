@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- elite_v1alpha1_feedlistener.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

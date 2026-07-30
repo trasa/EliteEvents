@@ -1,0 +1,316 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: feedlisteners.elite.meancat.com
+spec:
+  group: elite.meancat.com
+  names:
+    kind: FeedListener
+    listKind: FeedListenerList
+    plural: feedlisteners
+    shortNames:
+    - feed
+    - feeds
+    singular: feedlistener
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.relayEndpoint
+      name: Relay
+      type: string
+    - jsonPath: .status.readyConsumers
+      name: Consumers
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.lastMessageTime
+      name: Last Message
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: FeedListener is a subscription to an EDDN relay, reconciled into
+          the consumers that service it.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of FeedListener
+            properties:
+              consumers:
+                default: 1
+                description: |-
+                  consumers is the number of pods sharing this subscription.
+
+                  EDDN is a broadcast firehose with no topic frame, so every subscriber receives every
+                  message and N naive replicas would count every event N times. Consumers are therefore
+                  shards, not replicas: the controller assigns each pod a distinct shard index out of this
+                  total, and each pod discards messages that do not hash to its own shard. Keeping that
+                  partition exhaustive and non-overlapping is the controller's core invariant.
+                format: int32
+                maximum: 16
+                minimum: 1
+                type: integer
+              image:
+                description: image is the consumer container image, including tag.
+                minLength: 1
+                type: string
+              imagePullSecrets:
+                description: |-
+                  imagePullSecrets are passed through to the consumer pods. DOKS names its registry pull
+                  secret after the registry itself, so this is typically "meancat".
+                items:
+                  description: |-
+                    LocalObjectReference contains enough information to let you locate the
+                    referenced object inside the same namespace.
+                  properties:
+                    name:
+                      default: ""
+                      description: |-
+                        Name of the referent.
+                        This field is effectively required, but due to backwards compatibility is
+                        allowed to be empty. Instances of this type with an empty value here are
+                        almost certainly wrong.
+                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      type: string
+                  type: object
+                  x-kubernetes-map-type: atomic
+                type: array
+              reconnectAfterSilence:
+                default: 2m
+                description: |-
+                  reconnectAfterSilence is how long a consumer tolerates silence before rebuilding its
+                  socket. It doubles as the threshold for the Streaming condition, so recovery and the
+                  status that reports it stay in step.
+                type: string
+              redis:
+                description: redis is where consumers write what they ingest.
+                properties:
+                  authSecret:
+                    description: authSecret supplies the password as a mounted file.
+                    properties:
+                      key:
+                        default: password
+                        description: key within the Secret holding the password.
+                        type: string
+                      name:
+                        description: name of the Secret in the same namespace as the
+                          FeedListener.
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  connectionString:
+                    description: connectionString is the StackExchange.Redis configuration
+                      string, without the password.
+                    example: redis:6379,abortConnect=false
+                    minLength: 1
+                    type: string
+                required:
+                - connectionString
+                type: object
+              relayEndpoint:
+                default: tcp://eddn.edcd.io:9500
+                description: relayEndpoint is the ZeroMQ endpoint to subscribe to.
+                pattern: ^tcp://[^/\s]+:[0-9]+$
+                type: string
+              resources:
+                description: resources overrides the compute resources of the consumer
+                  container.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              retainIndexesOnDelete:
+                description: |-
+                  retainIndexesOnDelete skips the drain Job that would otherwise purge this feed's
+                  Redis search indexes when the resource is deleted. Set it when another listener writes
+                  the same keyspace, or when the data should outlive the resource that produced it.
+                type: boolean
+            required:
+            - image
+            - redis
+            - relayEndpoint
+            type: object
+          status:
+            description: status defines the observed state of FeedListener
+            properties:
+              conditions:
+                description: conditions represent the current state of the FeedListener.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              desiredConsumers:
+                description: desiredConsumers mirrors spec.consumers at the time status
+                  was written.
+                format: int32
+                type: integer
+              lastMessageTime:
+                description: |-
+                  lastMessageTime is the most recent message timestamp reported by any consumer. This is
+                  the signal that distinguishes a healthy listener from one that is merely running.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: observedGeneration is the .metadata.generation this status
+                  was computed from.
+                format: int64
+                type: integer
+              phase:
+                description: phase is a coarse, human-facing summary. Conditions are
+                  the machine-readable truth.
+                enum:
+                - Pending
+                - Progressing
+                - Streaming
+                - Silent
+                - Degraded
+                - Terminating
+                type: string
+              readyConsumers:
+                description: readyConsumers is the number of consumer pods currently
+                  Ready.
+                format: int32
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      scale:
+        specReplicasPath: .spec.consumers
+        statusReplicasPath: .status.readyConsumers
+      status: {}

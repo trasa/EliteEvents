@@ -12,7 +12,7 @@ if [ -z "${VERSION:-}" ]; then
     VERSION="$(dotnet nbgv get-version -v NuGetPackageVersion)"
 fi
 
-echo "Building ${REGISTRY}/elite-{web,ingestion}:${VERSION}"
+echo "Building ${REGISTRY}/elite-{web,ingestion,operator}:${VERSION}"
 
 docker buildx build --platform linux/amd64 -f Dockerfile.web \
     -t "${REGISTRY}/elite-web:${VERSION}" \
@@ -21,6 +21,14 @@ docker buildx build --platform linux/amd64 -f Dockerfile.web \
 docker buildx build --platform linux/amd64 -f Dockerfile.ingestion \
     -t "${REGISTRY}/elite-ingestion:${VERSION}" \
     -t "${REGISTRY}/elite-ingestion:latest" .
+
+# The FeedListener controller. It is a separate Go module under operator/ with its own build
+# context, but it is tagged from the same nbgv version as the .NET images: the controller and the
+# ingestion image it schedules have to agree on the config keys and the --purge-indexes flag, so
+# a single version across all three is what makes "which operator goes with which app" answerable.
+docker buildx build --platform linux/amd64 \
+    -t "${REGISTRY}/elite-operator:${VERSION}" \
+    -t "${REGISTRY}/elite-operator:latest" operator/
 
 echo "$VERSION" > .image-version
 echo "Built ${VERSION} (recorded in .image-version for push-image)"

@@ -11,7 +11,8 @@ Live at `elite.meancat.com`, running on DigitalOcean Kubernetes.
 
 ## Projects
 
-Three projects are deployed as two containers, plus one legacy app that isn't.
+Three .NET projects are deployed as two containers, plus a Go operator and one legacy app that
+isn't deployed.
 
 - **`EliteEvents.Eddn`** — class library. EDDN connectivity, generated message types, the typed
   handler-dispatch pipeline, **and the whole Redis storage layer** (`Storage/`). Both containers
@@ -22,6 +23,10 @@ Three projects are deployed as two containers, plus one legacy app that isn't.
 - **`EliteEvents.Web`** (.NET 10) — the public site. Razor Components in **static SSR** (no
   circuit, no WebSocket) plus htmx, serving HTML, a JSON API and an SSE ticker. Stateless and
   horizontally scalable; reads Redis, never writes it.
+- **`operator/`** — a Kubebuilder/controller-runtime operator (Go, its own module) managing
+  `kind: FeedListener` in group `elite.meancat.com`. It reconciles a declared EDDN subscription
+  into the ConfigMap, Service and per-shard Deployments that `k8s/20-ingestion.yaml` used to
+  spell out by hand. **Built but not yet cut over** — see below.
 - **`EliteEvents.JournalWeb`** — a separate/legacy Blazor app that reads local Elite Dangerous
   journal files via `EliteJournalReader` and uses SignalR. **Not containerised, not deployed.**
   Don't assume changes here affect production.
@@ -104,10 +109,59 @@ Station names are no longer searchable. The old glob matched the station segment
 could hit a system via one of its stations — but station names are stored verbatim while queries
 are uppercased, so in practice that only ever fired for stations that were already all-caps.
 
+## The FeedListener operator (`operator/`)
+
+An EDDN subscription declared as a resource. `spec` carries the relay endpoint, consumer count,
+image, Redis connection and reconnect threshold; the controller reconciles that into one
+ConfigMap, one Service, and **one Deployment per shard** (`replicas: 1`, `strategy: Recreate`).
+
+Three things justify an operator over a Deployment, and each shapes the code:
+
+- **`spec.consumers` is a shard count, not a replica count.** EDDN broadcasts and its frames carry
+  no topic (`EddnStream` calls `SubscribeToAnyTopic()`), so every subscriber gets every message
+  and N unfiltered replicas would count each docking N times. Each pod receives a distinct
+  `Eddn__ShardIndex` and drops messages that don't hash to it (`MessageShardFilter`). One
+  Deployment per shard is what makes the indexes distinct — a single Deployment gives every
+  replica an identical pod spec. The controller also **prunes shards on scale-down**: their owner
+  is still alive, so nothing garbage-collects them and they would keep writing.
+- **A finalizer drains Redis, in order.** `index:systems` / `index:carriers` have no TTL and are
+  maintained only by a running listener, so deleting the resource would orphan them. The
+  finalizer deletes the consumer Deployments, waits for their pods to be gone, then runs a Job on
+  the **ingestion image** with `--purge-indexes` (`PurgeCommand` → `SearchIndexPurger`). Purging
+  while a consumer still ran would be undone by its next write. If the drain Job fails past its
+  backoff limit the finalizer is released anyway, loudly — a finalizer that can't be satisfied
+  wedges the namespace, which is worse than stale keys.
+- **`status` separates running from receiving.** The controller polls each pod's `/health/stream`
+  by pod IP (not through the Service — a ClusterIP would answer from an arbitrary shard) and sets
+  `Available` (pods Ready) apart from `Streaming` (every shard got a message within
+  `reconnectAfterSilence`). Nothing in the k8s API changes when a relay goes quiet, so status is
+  re-derived on a 30s `RequeueAfter`.
+
+Two cross-language contracts are easy to break silently:
+
+- **`Eddn__ReconnectAfterSilence` is rendered `HH:MM:SS`.** Go's `Duration.String()` produces
+  `2m0s`, which .NET's `TimeSpan` parser rejects — options binding would fall back to the default
+  and the spec value would be ignored with no error.
+- **`MessageShardFilter.StableHash` must never change.** It is FNV-1a over UTF-16 code units
+  **plus a Murmur3 `fmix32` avalanche**. The avalanche is load-bearing: raw FNV-1a leaves the low
+  bits unmixed (multiplying by an odd prime preserves them), so `% 2`, `% 4`, `% 8` and `% 16`
+  all put the entire feed in one bucket — measured, and caught by a test. Changing the hash during
+  a rolling update repartitions the feed mid-flight, so the digest is pinned by test literals.
+
+The controller never speaks Redis: `RedisKeys` stays the only definition of the keyspace, which is
+why teardown runs the app's own image rather than deleting keys by name from Go.
+
+**Cutover status:** `k8s/25-feedlistener.yaml` exists but is deliberately **not** in
+`kustomization.yaml`; listing it alongside `20-ingestion.yaml` would run two writers. The runbook
+is in `k8s/README.md`.
+
 ## Health endpoints
 
 Both containers expose `/health/live` (**no checks at all** — the process answering is the signal)
-and `/health/ready`. Liveness is deliberately lenient so k8s doesn't restart a pod that is merely
+and `/health/ready`. Ingestion additionally serves `/health/stream` — JSON with `lastMessageUtc`,
+`messagesReceived`, `messagesHandled`, `shardIndex` and `shardCount`, read per-pod by the
+FeedListener controller. It describes *this instance only*, which is the point: a shard reporting
+healthy receives but zero handled is a partition fault, not a feed outage. Liveness is deliberately lenient so k8s doesn't restart a pod that is merely
 waiting out a quiet EDDN period or retrying Redis.
 
 Readiness differs by tier: Ingestion requires Redis **and** a fresh EDDN heartbeat; Web requires
@@ -141,8 +195,12 @@ dotnet run --project EliteEvents.Web         # site on http://localhost:5240
 # Tests — no Redis, no network of their own (but see the build note above)
 dotnet test EliteEvents.Eddn.Tests
 
+# Operator (Go, separate module — see operator/README.md)
+cd operator && make test      # unit tests + envtest; Makefile pins GOTOOLCHAIN=go1.26.5
+cd operator && make manifests generate   # after editing api/v1alpha1/feedlistener_types.go
+
 # Images and deployment (see k8s/README.md)
-./build-image      # both images, linux/amd64, tagged from nbgv
+./build-image      # all three images, linux/amd64, tagged from nbgv
 ./push-image       # to registry.digitalocean.com/meancat
 ./deploy-k8s <tag> # write the tag into kustomization.yaml, apply, wait for both rollouts
                    # commit kustomization.yaml afterwards — it records the deployed version
@@ -150,8 +208,17 @@ dotnet test EliteEvents.Eddn.Tests
 
 ### Tests
 
-**`EliteEvents.Eddn.Tests`** (xUnit) is the only test project. It covers `RedisKeys` and
-`WeeklyExpirationCalculator` — pure logic, so it needs no Redis and runs in well under a second.
+**`EliteEvents.Eddn.Tests`** (xUnit) is the only .NET test project. It covers `RedisKeys`,
+`WeeklyExpirationCalculator` and `MessageShardFilter` — pure logic, so it needs no Redis and runs
+in well under a second. The operator has its own suite under `operator/` (`make test`): unit tests
+for the resource builders plus an envtest suite that runs the reconciler against a real API
+server.
+
+`MessageShardFilter` is tested for the partition property, not the hash: every message must be
+owned by exactly one shard (a gap loses events, an overlap double-counts them), and every shard
+must get a working share. That second test is what caught raw FNV-1a sending 100% of the feed to
+one shard at every power-of-two consumer count — the partition was still exactly-once, so only the
+distribution test failed.
 
 `RedisKeys` is tested as a **wire format**, not an implementation detail: ingestion and the web
 tier are separate containers whose only agreement is the shape of those strings, so a "harmless"

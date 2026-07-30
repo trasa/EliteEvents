@@ -1,0 +1,44 @@
+# The EDDN subscription, declared. This replaces 20-ingestion.yaml: the FeedListener controller
+# reconciles it into the ConfigMap, Service and per-shard Deployment that file used to spell out.
+#
+# NOT YET IN kustomization.yaml. Adding it there while 20-ingestion.yaml is still listed would put
+# two writers on the same Redis and double-count every docking until one was removed. The cutover
+# is a single edit that swaps one for the other — see k8s/README.md.
+apiVersion: elite.meancat.com/v1alpha1
+kind: FeedListener
+metadata:
+  name: eddn
+  labels:
+    app.kubernetes.io/part-of: elite-events
+spec:
+  relayEndpoint: tcp://eddn.edcd.io:9500
+
+  # A shard count, not a replica count. EDDN broadcasts every message to every subscriber, so
+  # each consumer still receives and decompresses the entire firehose; raising this splits only
+  # the handler work, and the controller guarantees the partition covers every message exactly
+  # once. One consumer is not close to strained at EDDN volumes — leave this at 1 unless there is
+  # a measurement saying otherwise.
+  consumers: 1
+
+  # The controller does not track image tags; this is the deployed version, the same way
+  # kustomization.yaml records the other two. `./deploy-k8s <tag>` does not rewrite it.
+  image: registry.digitalocean.com/meancat/elite-ingestion:1.0.0-alpha.g8380e4311a
+  imagePullSecrets:
+    # DOKS's registry integration names this secret after the registry itself.
+    - name: meancat
+
+  redis:
+    connectionString: redis:6379,abortConnect=false
+    # Mounted as a file rather than folded into the connection string: the password may contain
+    # ',' or '=', either of which would corrupt the parse.
+    authSecret:
+      name: redis-auth
+      key: password
+
+  # The same threshold the consumer reconnects on, so status flips to Silent exactly when
+  # automatic recovery starts rather than at some unrelated moment.
+  reconnectAfterSilence: 2m
+
+  # Deleting this resource drains index:systems and index:carriers, which carry no TTL and would
+  # otherwise be orphaned. Set retainIndexesOnDelete: true to keep them — e.g. when replacing the
+  # resource in place rather than retiring the feed.

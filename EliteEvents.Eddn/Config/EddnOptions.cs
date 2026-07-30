@@ -18,4 +18,18 @@ public class EddnOptions
     /// recovery is attempted before the Unhealthy alert fires.
     /// </summary>
     public TimeSpan ReconnectAfterSilence { get; set; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// How many consumers share this subscription. Each one handles a disjoint slice of the
+    /// firehose; see <see cref="MessageShardFilter"/> for why a broadcast feed needs this at
+    /// all. The default of 1 is the single-writer configuration.
+    /// </summary>
+    public int ShardCount { get; set; } = 1;
+
+    /// <summary>
+    /// Which slice of <see cref="ShardCount"/> this consumer owns, zero-based. Assigned by the
+    /// FeedListener controller, which is what guarantees the indexes are distinct and that
+    /// every index in the range is covered.
+    /// </summary>
+    public int ShardIndex { get; set; }
 }

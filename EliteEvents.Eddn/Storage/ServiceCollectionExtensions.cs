@@ -55,6 +55,10 @@ public static class ServiceCollectionExtensions
         // side even though the reader depends on its output. Scheduling the rebuild is the host's
         // job — see SearchIndexMaintenanceService in Ingestion.
         services.TryAddSingleton<ISearchIndexMaintainer, SearchIndexMaintainer>();
+
+        // Teardown is a write, and it deletes the same keys the maintainer builds. Registering
+        // it here keeps the whole lifecycle of the index on one side of the reader/writer split.
+        services.TryAddSingleton<ISearchIndexPurger, SearchIndexPurger>();
         return services;
     }
 

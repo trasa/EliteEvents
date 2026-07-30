@@ -22,6 +22,7 @@ public class EddnStreamReceiver : BackgroundService
     private readonly IMessageHandlerProvider<JournalMessage, MessageEvent> _handlers;
     private readonly StreamHealthTracker _streamHealth;
     private readonly IStreamHeartbeatWriter _heartbeat;
+    private readonly IMessageShardFilter _shard;
     private readonly EddnOptions _options;
 
     private int _consecutiveFailures;
@@ -33,6 +34,7 @@ public class EddnStreamReceiver : BackgroundService
         IMessageHandlerProvider<JournalMessage, MessageEvent> handlers,
         StreamHealthTracker streamHealth,
         IStreamHeartbeatWriter heartbeat,
+        IMessageShardFilter shard,
         IOptions<EddnOptions> options)
     {
         _logger = logger;
@@ -41,11 +43,14 @@ public class EddnStreamReceiver : BackgroundService
         _handlers = handlers;
         _streamHealth = streamHealth;
         _heartbeat = heartbeat;
+        _shard = shard;
         _options = options.Value;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _logger.LogInformation("Starting EDDN subscriber as shard {ShardIndex} of {ShardCount}",
+            _shard.ShardIndex, _shard.ShardCount);
         _eddnStream.Connect();
         // Seed the shared heartbeat the way StreamHealthTracker seeds itself, so the silence
         // threshold doubles as a startup grace window for the readiness probe too.
@@ -59,8 +64,15 @@ public class EddnStreamReceiver : BackgroundService
             var str = _eddnStream.Receive();
             if (str != null)
             {
+                // Health is recorded for every frame that arrives, not just the ones this shard
+                // owns. The heartbeat reports whether the socket is alive, and a shard that
+                // happened to own few of the last few hundred messages is not a silent feed.
                 _streamHealth.RecordMessage();
-                await ProcessMessageAsync(str);
+                if (_shard.Owns(str))
+                {
+                    _streamHealth.RecordHandled();
+                    await ProcessMessageAsync(str);
+                }
                 await _heartbeat.RecordAsync(_streamHealth.LastMessageUtc);
             }
             else if (ShouldReconnect(lastReconnect, out var silence))

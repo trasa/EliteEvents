@@ -11,7 +11,7 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
-for image in elite-web elite-ingestion; do
+for image in elite-web elite-ingestion elite-operator; do
     docker push "${REGISTRY}/${image}:${VERSION}"
     docker push "${REGISTRY}/${image}:latest"
 done

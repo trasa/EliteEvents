@@ -7,6 +7,12 @@
     </PropertyGroup>
     
     <ItemGroup>
+        <!-- MessageShardFilter.StableHash is internal but pinned by test: the hash has to stay
+             byte-identical across releases or a rolling update repartitions the feed mid-flight. -->
+        <InternalsVisibleTo Include="EliteEvents.Eddn.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
         <PackageReference Include="Cronos" Version="0.11.1" />
         <PackageReference Include="Iconic.Zlib.Netstandard" Version="1.0.0" />
         <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.2" />

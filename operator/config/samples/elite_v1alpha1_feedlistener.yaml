@@ -1,0 +1,29 @@
+# The production EDDN feed, as a declared resource rather than a hand-maintained Deployment.
+#
+# consumers is a shard count, not a replica count. EDDN broadcasts every message to every
+# subscriber, so raising this does not split the receive load — each consumer still reads and
+# decompresses the whole firehose — it splits the *handling*, and the controller guarantees the
+# partition covers every message exactly once. Leave it at 1 unless handler work is the
+# bottleneck; at EDDN volumes one consumer is not close to strained.
+apiVersion: elite.meancat.com/v1alpha1
+kind: FeedListener
+metadata:
+  name: eddn
+  namespace: elite
+  labels:
+    app.kubernetes.io/part-of: elite-events
+spec:
+  relayEndpoint: tcp://eddn.edcd.io:9500
+  consumers: 1
+  image: registry.digitalocean.com/meancat/elite-ingestion:1.0.0-alpha.g8380e4311a
+  imagePullSecrets:
+    # DOKS's registry integration names this after the registry itself, not registry-<name>.
+    - name: meancat
+  redis:
+    connectionString: redis:6379,abortConnect=false
+    authSecret:
+      name: redis-auth
+      key: password
+  # Matches the threshold the consumer reconnects on, so the Streaming condition flips exactly
+  # when automatic recovery begins.
+  reconnectAfterSilence: 2m

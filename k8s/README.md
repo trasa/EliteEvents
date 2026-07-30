@@ -203,9 +203,56 @@ needs:
 | `00-namespace.yaml` | `elite` |
 | `10-redis.yaml` | ConfigMap, headless + ClusterIP Services, single-replica StatefulSet on a 5 GiB PVC |
 | `20-ingestion.yaml` | the EDDN writer: `replicas: 1`, `strategy: Recreate` |
+| `25-feedlistener.yaml` | the same writer as a `FeedListener` resource — **not in `kustomization.yaml` yet**; see below |
 | `30-web.yaml` | web Deployment (2 replicas) + Service |
 | `40-ingress.yaml` | ingress-nginx rules, TLS, SSE-friendly proxy settings |
 | `cluster-issuer.yaml` | Let's Encrypt staging + prod issuers — cluster-scoped, applied at provisioning time, not part of `kustomization.yaml` |
+
+## Moving ingestion onto the FeedListener operator
+
+`k8s/25-feedlistener.yaml` declares the same subscription that `20-ingestion.yaml` spells out by
+hand. Both files exist; only `20-ingestion.yaml` is in `kustomization.yaml`, because listing both
+would run two EDDN subscribers against the same Redis and **double-count every docking** until one
+was removed.
+
+The controller lives in `operator/` and is deployed separately, into its own namespace.
+
+```bash
+# 1. Build and push all three images at one version.
+./build-image && ./push-image
+
+# 2. Install the CRD and the controller. Creates no workloads on its own — with no FeedListener
+#    resource in the cluster, the controller idles.
+cd operator
+make install
+make deploy IMG=registry.digitalocean.com/meancat/elite-operator:<tag>
+kubectl -n elite-events-operator-system rollout status deploy/elite-events-operator-controller-manager
+
+# 3. Cut over. Deleting first is deliberate: it costs a few seconds of dropped events, which the
+#    30-day TTL data absorbs without trace, and it is the only ordering that cannot briefly run
+#    two writers.
+kubectl -n elite delete deployment ingestion
+kubectl -n elite wait --for=delete pod -l app=ingestion --timeout=60s
+kubectl apply -f k8s/25-feedlistener.yaml -n elite
+
+# 4. Confirm the feed is not merely running but actually receiving.
+kubectl -n elite get feed eddn
+kubectl -n elite describe feed eddn    # Streaming=True is the one that matters
+```
+
+Then edit `kustomization.yaml`: drop `20-ingestion.yaml`, add `25-feedlistener.yaml`, and commit.
+Until that edit lands, a bare `kubectl apply -k k8s/` recreates the old Deployment alongside the
+FeedListener's pods — the two-writer case again.
+
+**Rolling back** is the same sequence reversed: delete the `FeedListener` (wait for it, the
+finalizer drains the search indexes and holds the object until the drain Job finishes), then
+re-apply `20-ingestion.yaml`. The indexes rebuild on the next hourly `SearchIndexMaintainer` pass,
+and search returns nothing until then. Add `retainIndexesOnDelete: true` to the spec before
+deleting to skip the drain and keep them.
+
+**The image tag lives in `25-feedlistener.yaml`, not `kustomization.yaml`.** `./deploy-k8s <tag>`
+rewrites the `images:` block, which the FeedListener does not use — so once ingestion is on the
+operator, upgrading it is an edit to `spec.image` in that file.
 
 ## Things worth knowing
 

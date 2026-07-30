@@ -1,14 +1,28 @@
+using EliteEvents.Eddn;
 using EliteEvents.Eddn.Config;
 using EliteEvents.Eddn.Handlers;
 using EliteEvents.Eddn.Journal;
 using EliteEvents.Eddn.Storage;
+using EliteEvents.Ingestion;
 using EliteEvents.Ingestion.Handlers;
 using EliteEvents.Ingestion.Services;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 
 // The EDDN ingestion service: subscribes to the firehose and writes to Redis. It is a web host
 // only so that k8s has HTTP probes to call — there is no UI, no static files, and the only
-// endpoints are the two health checks below. It must run as a single writer (replicas: 1).
+// endpoints are the health checks below.
+//
+// Consumers are shards, not replicas: EDDN broadcasts every message to every subscriber, so N
+// unfiltered writers would count every event N times. Each instance handles only the slice of
+// the feed matching its Eddn:ShardIndex; the FeedListener controller assigns those.
+if (args.Contains(PurgeCommand.Flag))
+{
+    // Teardown mode, invoked by the FeedListener finalizer's drain Job. It shares this image
+    // (and therefore RedisKeys) rather than living in the operator, so the keyspace has exactly
+    // one definition. It connects, deletes, and exits — no stream, no host, no probes.
+    return await PurgeCommand.RunAsync(args);
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration
@@ -53,4 +67,19 @@ var app = builder.Build();
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
 
-app.Run();
+// Structured feed health for the FeedListener controller. The probe endpoints answer a yes/no
+// that Kubernetes can act on; this answers "is the subscription actually delivering, and is
+// this shard getting its share of it" — the questions the CRD's status reports and that neither
+// a Deployment nor a probe can express. It is read per-pod, so it deliberately describes this
+// instance only.
+app.MapGet("/health/stream", (StreamHealthTracker health, IMessageShardFilter shard) => Results.Ok(new
+{
+    lastMessageUtc = health.LastMessageUtc,
+    messagesReceived = health.MessagesReceived,
+    messagesHandled = health.MessagesHandled,
+    shardIndex = shard.ShardIndex,
+    shardCount = shard.ShardCount
+}));
+
+await app.RunAsync();
+return 0;
