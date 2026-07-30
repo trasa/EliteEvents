@@ -9,10 +9,14 @@ public interface ICachedSystemCount
 }
 
 /// <summary>
-/// Total number of systems with recorded station activity. Counting means SCANning the whole
-/// keyspace, so the result is cached in Redis for
-/// <see cref="RedisKeys.SystemCountCacheDuration"/> rather than in process memory — the cache
-/// then stays coherent across web pods and survives a restart.
+/// Total number of systems with recorded station activity.
+/// <para>
+/// This used to mean SCANning the whole keyspace for <c>system:*:stations</c>, which is why the
+/// result is cached. Now that <see cref="RedisKeys.SystemIndex"/> holds exactly one member per
+/// such system, the count is a single O(1) <c>ZCARD</c> and the cache is no longer load-bearing —
+/// it is kept because it still saves a round-trip on a value rendered on every page, and because
+/// caching in Redis rather than in process memory is what keeps it coherent across web pods.
+/// </para>
 /// <para>
 /// This is the one thing on the read side that writes, and it only ever touches its own
 /// <see cref="RedisKeys.SystemCountCache"/> key, never real data.
@@ -21,15 +25,11 @@ public interface ICachedSystemCount
 public class CachedSystemCount : ICachedSystemCount
 {
     private readonly ILogger<CachedSystemCount> _logger;
-    private readonly IServer _server;
     private readonly IDatabase _database;
 
     public CachedSystemCount(ILogger<CachedSystemCount> logger, IConnectionMultiplexer connection)
     {
         _logger = logger;
-        // for KEYS, SCAN ...
-        _server = connection.GetServer(connection.GetEndPoints().First());
-        // for everything else
         _database = connection.GetDatabase();
     }
 
@@ -48,12 +48,7 @@ public class CachedSystemCount : ICachedSystemCount
 
     private async Task<long> CalculateActualCountAsync()
     {
-        long count = 0;
-        await foreach (var _ in _server.KeysAsync(pattern: RedisKeys.AllSystemStationsPattern))
-        {
-            count++;
-        }
-
+        var count = await _database.SortedSetLengthAsync(RedisKeys.SystemIndex);
         _logger.LogInformation("Calculated actual system count: {Count}", count);
         return count;
     }

@@ -1,8 +1,8 @@
 # Roadmap — merge Visitors + Dashboard into one ASP.NET/htmx app
 
-Status: **Phases 1–5 complete.** `elite.meancat.com` serves from Kubernetes; the droplet and the
-managed Valkey were destroyed on 2026-07-30, so there is no longer a rollback path to the old
-stack. Only Phase 6 (optional) remains.
+Status: **Complete.** `elite.meancat.com` serves from Kubernetes; the droplet and the managed
+Valkey were destroyed on 2026-07-30, so there is no longer a rollback path to the old stack. All
+three optional Phase 6 items are done as well.
 
 > **Do not deploy the droplet stack from this branch.** `EliteEvents.Visitors` no longer ingests —
 > `Dockerfile` / `build-image` / `docker-compose.yaml` still build and run only that project, so
@@ -63,7 +63,7 @@ costs it nothing. Cutover is a DNS/ingress change, not a data operation.
 
 ## Open questions
 
-- [ ] Phase 6 items — which, if any, are in scope.
+- [x] Phase 6 items — which, if any, are in scope. **All three, done 2026-07-30.**
 
 ---
 
@@ -436,12 +436,61 @@ seconds, no pod restarted, and the site never stopped answering 200.
 
 ## Phase 6 — optional
 
-1. **Search index.** `GetMatchingSystems` runs a full `SCAN` with a `*glob*` pattern per search —
-   O(keyspace) against a Redis holding every system seen in 30 days. Ingestion could maintain
-   `index:systems` / `index:carriers` sorted sets for `ZRANGEBYLEX` prefix lookups. Prerequisite
-   for htmx keystroke-triggered typeahead.
-2. **Batch the writes.** Each `Docked` event is 6 sequential round-trips today; `IBatch` makes it one.
-3. ~~**First test project.**~~ **Done 2026-07-30.** `EliteEvents.Eddn.Tests` (xUnit, 39 tests)
+1. ~~**Search index.**~~ **Done 2026-07-30.** `index:systems` / `index:carriers` sorted sets,
+   written inline by `DockingWriter` and reconciled hourly by `SearchIndexMaintainer`.
+
+   Search does a `ZRANGEBYLEX` prefix lookup, then falls back to a `ZSCAN` `*query*` MATCH **only
+   if the prefix pass didn't fill the requested `limit`** — so the `limit` parameter, not a
+   separate method, is what gives typeahead its fast path. Searches were previously unbounded;
+   the default is now 200.
+
+   Two constraints shaped the rest of it:
+
+   - **`ZRANGEBYLEX` requires every member to share a score**, so the index is stored at score 0
+     and therefore cannot also carry a last-seen timestamp to be pruned by. A TTL on the key would
+     drop the entire index rather than age out members.
+   - So the data keys and their existing 30-day TTL stay the source of truth, and
+     `SearchIndexMaintainer` reconciles against them rather than restating the expiry rule
+     somewhere it could drift. One rebuild covers stale entries, backfill, *and* recovery from
+     `allkeys-lru` evicting the index key — a real possibility for a single large key. It
+     snapshots the index before scanning, so a name the writer adds mid-scan cannot be mistaken
+     for stale and deleted.
+
+   `CachedSystemCount` fell out of this for free: it was a full-keyspace SCAN, now a `ZCARD`.
+
+   Behaviour changes: results are prefix matches first, then substring, where the old SCAN
+   returned one flat alphabetical list; and **station names are no longer searchable as systems**.
+   That quirk was pinned by a test in item 3, but it was already near-dead in production — station
+   names are stored verbatim while queries are uppercased, so the glob only ever matched stations
+   that happened to be all-caps. Glob metacharacters in the query are now escaped, closing a hole
+   where a query of `*` turned a lookup into a full scan.
+
+   New risk to know about: the web tier now depends on a key only Ingestion maintains. On the
+   deploy that introduces it, search returns nothing and the count reads 0 until the first
+   rebuild, which is why that first pass retries every 15s instead of waiting out the hour.
+
+2. ~~**Batch the writes.**~~ **Done 2026-07-30.** Every `IDockingWriter` method dispatches one
+   `IBatch`; a station docking went from 6 sequential round-trips to 1 (and the two `HSET`s
+   collapsed into one). A batch is pipelined, not transactional — safe here because ingestion is a
+   single writer and every operation is a commutative increment or an idempotent set, so nothing
+   reads a value before writing it.
+
+### Measured, 20,000 systems / 80,001 keys, local Redis
+
+| Operation | Before | After | |
+|---|---|---|---|
+| Search, 2-char prefix, `limit: 10` (typeahead) | 74.01 ms | **0.18 ms** | 422x |
+| Search, long prefix, default limit (hits the fallback) | 73.52 ms | **15.48 ms** | 5x |
+| Search, substring (fallback only) | 73.49 ms | **14.94 ms** | 5x |
+| System count, cold cache | 74.28 ms | **0.61 ms** | 122x |
+| 1,000 station dockings, sequential | 856 ms (1,167/s) | **151 ms (6,637/s)** | 5.7x |
+
+The two 5x rows are the fallback path: it is still O(index), but the index holds one member per
+system instead of one key per station, and matching happens server-side so only hits cross the
+wire. Ask for a page small enough for the prefix pass to fill and the fallback never runs.
+
+
+3. ~~**First test project.**~~ **Done 2026-07-30.** `EliteEvents.Eddn.Tests` (xUnit, 49 tests)
    covers `RedisKeys` and `WeeklyExpirationCalculator` — pure logic, no Redis required.
 
    `RedisKeys` is tested as a wire format: key literals are asserted verbatim rather than rebuilt

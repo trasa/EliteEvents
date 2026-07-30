@@ -50,6 +50,11 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<WeeklyExpirationCalculator>();
         services.TryAddSingleton<IDockingWriter, DockingWriter>();
         services.TryAddSingleton<IEventPublisher, RedisEventPublisher>();
+
+        // The search index is written here but read by the web tier, so it belongs on the write
+        // side even though the reader depends on its output. Scheduling the rebuild is the host's
+        // job — see SearchIndexMaintenanceService in Ingestion.
+        services.TryAddSingleton<ISearchIndexMaintainer, SearchIndexMaintainer>();
         return services;
     }
 

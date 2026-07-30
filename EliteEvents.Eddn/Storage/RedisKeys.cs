@@ -1,3 +1,4 @@
+using System.Text;
 using StackExchange.Redis;
 
 namespace EliteEvents.Eddn.Storage;
@@ -94,18 +95,89 @@ public static class RedisKeys
     /// </summary>
     public static readonly TimeSpan HeartbeatExpiration = TimeSpan.FromHours(1);
 
+    // ---- search index --------------------------------------------------------------------
+    //
+    // Search used to be a SCAN of the whole keyspace with a *glob* pattern, which is O(keyspace)
+    // per keystroke — and the keyspace is dominated by per-station hashes, so it was orders of
+    // magnitude larger than the set of things actually being searched. These two sorted sets hold
+    // one member per searchable name and nothing else.
+    //
+    // Every member is stored at score 0 on purpose: ZRANGEBYLEX only has defined behaviour when
+    // all members share a score, and that lexicographic ordering is what makes a prefix lookup
+    // O(log N + M) instead of O(N). The cost of that choice is that the index cannot also carry a
+    // last-seen timestamp, so it cannot be pruned by score — SearchIndexMaintainer rebuilds it
+    // from the keyspace instead. See that class for why this is a feature rather than a
+    // workaround.
+
+    /// <summary>Lex-ordered set of system names that have station activity. All scores are 0.</summary>
+    public const string SystemIndex = "index:systems";
+
+    /// <summary>Lex-ordered set of known carrier IDs. All scores are 0.</summary>
+    public const string CarrierIndex = "index:carriers";
+
+    /// <summary>Score every index member gets, so <c>ZRANGEBYLEX</c> is well defined.</summary>
+    public const double IndexScore = 0;
+
+    /// <summary>
+    /// Inclusive lower bound of a <c>ZRANGEBYLEX</c> prefix lookup — the prefix itself.
+    /// </summary>
+    public static RedisValue LexPrefixMin(string normalizedPrefix) => normalizedPrefix;
+
+    /// <summary>
+    /// Inclusive upper bound of a prefix lookup: the prefix with a trailing <c>0xFF</c> byte.
+    /// <para>
+    /// This is deliberately built as raw bytes rather than by appending a char. Redis compares
+    /// members as byte strings, and no valid UTF-8 sequence contains <c>0xFF</c>, so this sorts
+    /// after every possible continuation of the prefix. Appending <c>'￿'</c> instead would
+    /// encode to <c>EF BF BF</c> and silently miss any name whose next byte is higher.
+    /// </para>
+    /// </summary>
+    public static RedisValue LexPrefixMax(string normalizedPrefix)
+    {
+        var prefix = Encoding.UTF8.GetBytes(normalizedPrefix);
+        var bound = new byte[prefix.Length + 1];
+        prefix.CopyTo(bound, 0);
+        bound[^1] = 0xFF;
+        return bound;
+    }
+
+    /// <summary>
+    /// <c>ZSCAN</c> MATCH pattern for a substring search within an index. Used as the fallback
+    /// when a prefix lookup doesn't fill the page — it is O(index) on the server, but the index
+    /// holds one member per system rather than one key per station, and matching happens
+    /// server-side so only hits cross the wire.
+    /// </summary>
+    public static string IndexMatchPattern(string normalizedQuery) => $"*{EscapeGlob(normalizedQuery)}*";
+
+    /// <summary>
+    /// Escapes the glob metacharacters Redis honours in a MATCH pattern. Search text comes
+    /// straight from a text box, so an unescaped <c>*</c> or <c>[</c> would turn a literal query
+    /// into a wildcard — at best surprising results, at worst an unbounded scan from a one-key
+    /// query. The old keyspace-glob search interpolated the query raw and had this same hole.
+    /// </summary>
+    public static string EscapeGlob(string value)
+    {
+        var escaped = new StringBuilder(value.Length);
+        foreach (var c in value)
+        {
+            if (c is '*' or '?' or '[' or ']' or '\\')
+            {
+                escaped.Append('\\');
+            }
+
+            escaped.Append(c);
+        }
+
+        return escaped.ToString();
+    }
+
     // ---- scan patterns -------------------------------------------------------------------
 
     /// <summary>Matches one key per system that has any station activity.</summary>
     public const string AllSystemStationsPattern = "system:*:stations";
 
-    /// <summary>
-    /// Substring search over system keys. Note this matches the station segment too, so a query
-    /// can hit a system by way of one of its station names — long-standing behavior, preserved.
-    /// </summary>
-    public static string SystemSearchPattern(string normalizedQuery) => $"system:*{normalizedQuery}*";
-
-    public static string CarrierSearchPattern(string normalizedQuery) => $"carrier:*{normalizedQuery}*";
+    /// <summary>Matches one key per carrier that has any recorded activity.</summary>
+    public const string AllCarrierDaysPattern = "carrier:*:days";
 
     /// <summary>Real data keys, deliberately excluding <c>cache:*</c>, for the health check.</summary>
     public static readonly string[] DataKeyPatterns = ["system:*", "carrier:*"];

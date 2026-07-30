@@ -31,7 +31,8 @@ builder.Services.AddEddnStream()
 // hosted services
 builder.Services
     .AddSingleton<StreamHealthTracker>()
-    .AddHostedService<EddnStreamReceiver>();
+    .AddHostedService<EddnStreamReceiver>()
+    .AddHostedService<SearchIndexMaintenanceService>();
 
 // redis — write side only. The reader is deliberately absent: this container never serves a
 // query, and leaving IDockingReader unregistered makes that a compile-time fact.

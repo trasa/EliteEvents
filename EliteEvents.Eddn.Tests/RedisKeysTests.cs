@@ -163,37 +163,14 @@ public class RedisKeysTests
     }
 
     [Fact]
-    public void SystemSearchPattern_is_a_substring_match()
+    public void AllCarrierDaysPattern_matches_one_key_per_carrier()
     {
-        Assert.Equal("system:*SOL*", RedisKeys.SystemSearchPattern("SOL"));
-        Assert.True(GlobMatches(RedisKeys.SystemSearchPattern("SOL"), RedisKeys.SystemStations("SOL")));
-        Assert.True(GlobMatches(RedisKeys.SystemSearchPattern("OL"), RedisKeys.SystemStations("SOL")));
-    }
+        Assert.Equal("carrier:*:days", RedisKeys.AllCarrierDaysPattern);
 
-    [Fact]
-    public void SystemSearchPattern_also_matches_the_station_segment()
-    {
-        // Long-standing quirk, preserved deliberately: the pattern has no anchor between the
-        // system and station segments, so searching a station name surfaces its system. Pinned
-        // here so it is a decision rather than a surprise — if this ever becomes unwanted, this
-        // is the test that should fail and be deleted on purpose.
-        var key = RedisKeys.Station("SOL", "ABRAHAM LINCOLN");
-        Assert.True(GlobMatches(RedisKeys.SystemSearchPattern("LINCOLN"), key));
-    }
-
-    [Fact]
-    public void CarrierSearchPattern_is_a_substring_match()
-    {
-        Assert.Equal("carrier:*X9K*", RedisKeys.CarrierSearchPattern("X9K"));
-        Assert.True(GlobMatches(RedisKeys.CarrierSearchPattern("X9K"), RedisKeys.CarrierDays("X9K-4BT")));
-    }
-
-    [Fact]
-    public void Search_patterns_do_not_cross_namespaces()
-    {
-        // A carrier search must never surface a system key, whatever the query.
-        Assert.False(GlobMatches(RedisKeys.CarrierSearchPattern("SOL"), RedisKeys.SystemStations("SOL")));
-        Assert.False(GlobMatches(RedisKeys.SystemSearchPattern("X9K"), RedisKeys.CarrierDays("X9K-4BT")));
+        // Same requirement as the system pattern: the index rebuild uses this to enumerate live
+        // carriers, so matching the per-day counters as well would make it enumerate days.
+        Assert.True(GlobMatches(RedisKeys.AllCarrierDaysPattern, RedisKeys.CarrierDays("X9K-4BT")));
+        Assert.False(GlobMatches(RedisKeys.AllCarrierDaysPattern, RedisKeys.CarrierDaily("X9K-4BT", "2026-07-30")));
     }
 
     [Fact]
@@ -207,6 +184,111 @@ public class RedisKeysTests
         Assert.Contains(RedisKeys.DataKeyPatterns, p => GlobMatches(p, RedisKeys.CarrierDays("X9K-4BT")));
         Assert.DoesNotContain(RedisKeys.DataKeyPatterns, p => GlobMatches(p, RedisKeys.SystemCountCache));
         Assert.DoesNotContain(RedisKeys.DataKeyPatterns, p => GlobMatches(p, RedisKeys.EddnHeartbeat));
+
+        // The search indexes are derived data, not real data. If they counted, a Redis holding
+        // nothing but a leftover index would look healthy — and the index outlives the data it
+        // describes by up to one rebuild interval, which is exactly when that would happen.
+        Assert.DoesNotContain(RedisKeys.DataKeyPatterns, p => GlobMatches(p, RedisKeys.SystemIndex));
+        Assert.DoesNotContain(RedisKeys.DataKeyPatterns, p => GlobMatches(p, RedisKeys.CarrierIndex));
+    }
+
+    // ---- search index ----------------------------------------------------------------------
+
+    [Fact]
+    public void Index_key_names()
+    {
+        Assert.Equal("index:systems", RedisKeys.SystemIndex);
+        Assert.Equal("index:carriers", RedisKeys.CarrierIndex);
+    }
+
+    [Fact]
+    public void Index_members_all_share_one_score()
+    {
+        // ZRANGEBYLEX is only defined when every member has the same score. This constant is
+        // what guarantees that, so a prefix lookup means anything at all.
+        Assert.Equal(0, RedisKeys.IndexScore);
+    }
+
+    [Fact]
+    public void LexPrefix_bounds_span_exactly_the_names_starting_with_the_prefix()
+    {
+        var min = (byte[])RedisKeys.LexPrefixMin("SOL")!;
+        var max = (byte[])RedisKeys.LexPrefixMax("SOL")!;
+
+        Assert.Equal("SOL"u8.ToArray(), min);
+        Assert.Equal([.. "SOL"u8.ToArray(), 0xFF], max);
+
+        Assert.True(WithinLexRange("SOL", min, max));
+        Assert.True(WithinLexRange("SOLATI", min, max));
+        Assert.True(WithinLexRange("SOL 2", min, max));
+        Assert.False(WithinLexRange("SOK", min, max));
+        Assert.False(WithinLexRange("SOM", min, max));
+        Assert.False(WithinLexRange("ANTLIA SECTOR SOL-A", min, max), "a substring match is not a prefix match");
+    }
+
+    [Fact]
+    public void LexPrefixMax_uses_a_byte_no_utf8_sequence_can_contain()
+    {
+        // The reason for building this bound as raw bytes: '￿' would encode to EF BF BF, so
+        // a name continuing with a higher byte would sort past the bound and be missed. 0xFF
+        // never appears in valid UTF-8, so nothing can sort past it.
+        var max = (byte[])RedisKeys.LexPrefixMax("SOL")!;
+        Assert.Equal(0xFF, max[^1]);
+        Assert.DoesNotContain((byte)0xFF, System.Text.Encoding.UTF8.GetBytes("SOL￿"));
+    }
+
+    [Fact]
+    public void LexPrefixMax_handles_an_empty_prefix()
+    {
+        Assert.Equal([0xFF], (byte[])RedisKeys.LexPrefixMax("")!);
+    }
+
+    [Fact]
+    public void IndexMatchPattern_wraps_the_query_in_wildcards()
+        => Assert.Equal("*SOL*", RedisKeys.IndexMatchPattern("SOL"));
+
+    [Theory]
+    [InlineData("SOL", "SOL")]
+    [InlineData("SOL*", @"SOL\*")]
+    [InlineData("SO?L", @"SO\?L")]
+    [InlineData("[SOL]", @"\[SOL\]")]
+    [InlineData(@"SO\L", @"SO\\L")]
+    [InlineData("**", @"\*\*")]
+    public void EscapeGlob_neutralizes_every_metacharacter(string input, string expected)
+        => Assert.Equal(expected, RedisKeys.EscapeGlob(input));
+
+    [Fact]
+    public void IndexMatchPattern_does_not_let_a_query_become_a_wildcard()
+    {
+        // Search text comes from a text box. Unescaped, a query of "*" would match the entire
+        // index — turning a one-key lookup into a full scan on demand. The old keyspace-glob
+        // search interpolated the query raw and had exactly this hole.
+        Assert.Equal(@"*\**", RedisKeys.IndexMatchPattern("*"));
+        Assert.False(GlobMatches(RedisKeys.IndexMatchPattern("*"), "SOL"));
+        Assert.True(GlobMatches(RedisKeys.IndexMatchPattern("*"), "A*B"));
+    }
+
+    /// <summary>
+    /// Byte-wise comparison, which is how Redis orders sorted-set members lexicographically.
+    /// </summary>
+    private static bool WithinLexRange(string member, byte[] min, byte[] max)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(member);
+        return Compare(bytes, min) >= 0 && Compare(bytes, max) <= 0;
+
+        static int Compare(byte[] left, byte[] right)
+        {
+            var shared = Math.Min(left.Length, right.Length);
+            for (var i = 0; i < shared; i++)
+            {
+                if (left[i] != right[i])
+                {
+                    return left[i].CompareTo(right[i]);
+                }
+            }
+
+            return left.Length.CompareTo(right.Length);
+        }
     }
 
     // ---- ExtractName -----------------------------------------------------------------------
@@ -246,12 +328,34 @@ public class RedisKeysTests
     }
 
     /// <summary>
-    /// Redis glob semantics, limited to the <c>*</c> the patterns above actually use — enough to
-    /// assert what a SCAN would and would not return without needing a Redis to ask.
+    /// Redis glob semantics, limited to <c>*</c>, <c>?</c> and backslash escaping — enough to
+    /// assert what a SCAN or ZSCAN would and would not return without needing a Redis to ask.
+    /// Escape handling is the point of the exercise for <see cref="RedisKeys.EscapeGlob"/>, so it
+    /// cannot be skipped the way a naive split on <c>*</c> would.
     /// </summary>
     private static bool GlobMatches(string pattern, string key)
     {
-        var regex = "^" + string.Join(".*", pattern.Split('*').Select(System.Text.RegularExpressions.Regex.Escape)) + "$";
-        return System.Text.RegularExpressions.Regex.IsMatch(key, regex);
+        var regex = new System.Text.StringBuilder("^");
+        for (var i = 0; i < pattern.Length; i++)
+        {
+            var c = pattern[i];
+            switch (c)
+            {
+                case '\\' when i + 1 < pattern.Length:
+                    regex.Append(System.Text.RegularExpressions.Regex.Escape(pattern[++i].ToString()));
+                    break;
+                case '*':
+                    regex.Append(".*");
+                    break;
+                case '?':
+                    regex.Append('.');
+                    break;
+                default:
+                    regex.Append(System.Text.RegularExpressions.Regex.Escape(c.ToString()));
+                    break;
+            }
+        }
+
+        return System.Text.RegularExpressions.Regex.IsMatch(key, regex.Append('$').ToString());
     }
 }

@@ -14,21 +14,31 @@ public interface IDockingReader
 
     Task<IReadOnlyList<SystemVisitInfo>> GetSystemVisitsAsync(int topN = 100);
 
-    Task<IReadOnlyList<string>> GetMatchingSystemsAsync(string searchQuery);
+    Task<IReadOnlyList<string>> GetMatchingSystemsAsync(string searchQuery, int limit = DockingReader.DefaultSearchLimit);
 
-    Task<IReadOnlyList<string>> GetMatchingCarriersAsync(string searchQuery);
+    Task<IReadOnlyList<string>> GetMatchingCarriersAsync(string searchQuery, int limit = DockingReader.DefaultSearchLimit);
 }
 
 public class DockingReader : IDockingReader
 {
-    private readonly IServer _redisServer;
+    /// <summary>
+    /// Results returned by a search when the caller doesn't say. Searches used to be unbounded;
+    /// a page of results is all the UI can use, and the cap is what lets the prefix lookup stop
+    /// early instead of walking the whole matching range.
+    /// </summary>
+    public const int DefaultSearchLimit = 200;
+
+    /// <summary>
+    /// Hard ceiling on members collected during the substring fallback, so a very broad query
+    /// (a single character against the carrier index, which has no minimum length) cannot pull an
+    /// unbounded list into memory just to sort it and throw nearly all of it away.
+    /// </summary>
+    private const int SubstringScanCeiling = 5_000;
+
     private readonly IDatabase _redisDatabase;
 
     public DockingReader(IConnectionMultiplexer connection)
     {
-        // for KEYS, SCAN ...
-        _redisServer = connection.GetServer(connection.GetEndPoints().First());
-        // for everything else
         _redisDatabase = connection.GetDatabase();
     }
 
@@ -105,44 +115,93 @@ public class DockingReader : IDockingReader
             .ToList();
     }
 
-    public async Task<IReadOnlyList<string>> GetMatchingCarriersAsync(string searchQuery)
-    {
-        if (string.IsNullOrWhiteSpace(searchQuery))
-        {
-            return [];
-        }
+    public Task<IReadOnlyList<string>> GetMatchingCarriersAsync(string searchQuery, int limit = DefaultSearchLimit)
+        => SearchIndexAsync(RedisKeys.CarrierIndex, searchQuery, limit);
 
-        var pattern = RedisKeys.CarrierSearchPattern(RedisKeys.NormalizeQuery(searchQuery));
-        return await ScanForNamesAsync(pattern);
-    }
-
-    public async Task<IReadOnlyList<string>> GetMatchingSystemsAsync(string searchQuery)
-    {
-        if (string.IsNullOrWhiteSpace(searchQuery))
-        {
-            return [];
-        }
-
-        var pattern = RedisKeys.SystemSearchPattern(RedisKeys.NormalizeQuery(searchQuery));
-        return await ScanForNamesAsync(pattern);
-    }
+    public Task<IReadOnlyList<string>> GetMatchingSystemsAsync(string searchQuery, int limit = DefaultSearchLimit)
+        => SearchIndexAsync(RedisKeys.SystemIndex, searchQuery, limit);
 
     /// <summary>
-    /// SCANs for keys matching <paramref name="pattern"/> and collects the distinct name segment.
-    /// Several keys share one name (a system has an index plus one key per station), hence the set.
+    /// Searches one of the name indexes, prefix matches first.
+    /// <para>
+    /// This replaced a <c>SCAN</c> of the entire keyspace with a <c>*glob*</c> pattern, which cost
+    /// O(keyspace) per search — and the keyspace is dominated by per-station hashes, so it was far
+    /// larger than the set of names being searched.
+    /// </para>
+    /// <para>
+    /// Two passes, in order of both cost and relevance:
+    /// </para>
+    /// <list type="number">
+    /// <item><c>ZRANGEBYLEX</c> for names starting with the query — O(log N + M), and the only
+    /// pass a typeahead needs.</item>
+    /// <item><c>ZSCAN</c> with a <c>*query*</c> MATCH for names merely containing it, run only
+    /// when the first pass didn't fill the page. Still O(index), but the index holds one member
+    /// per system rather than one key per station, and matching happens server-side so only hits
+    /// cross the wire.</item>
+    /// </list>
+    /// <para>
+    /// Ordering changed with it: prefix matches now come first, where the old SCAN returned one
+    /// flat alphabetical list. Searching "SOL" putting SOL above ANTLIA SECTOR SOL-A is the point.
+    /// </para>
     /// </summary>
-    private async Task<IReadOnlyList<string>> ScanForNamesAsync(string pattern)
+    private async Task<IReadOnlyList<string>> SearchIndexAsync(RedisKey index, string searchQuery, int limit)
     {
-        var matches = new HashSet<string>();
-        await foreach (var key in _redisServer.KeysAsync(pattern: pattern))
+        if (string.IsNullOrWhiteSpace(searchQuery) || limit <= 0)
         {
-            var name = RedisKeys.ExtractName(key.ToString());
-            if (name is not null)
+            return [];
+        }
+
+        var query = RedisKeys.NormalizeQuery(searchQuery);
+        if (query.Length == 0)
+        {
+            return [];
+        }
+
+        var prefixMatches = await _redisDatabase.SortedSetRangeByValueAsync(
+            index,
+            RedisKeys.LexPrefixMin(query),
+            RedisKeys.LexPrefixMax(query),
+            Exclude.None,
+            Order.Ascending,
+            skip: 0,
+            take: limit);
+
+        var results = new List<string>(limit);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var match in prefixMatches)
+        {
+            var name = match.ToString();
+            if (seen.Add(name))
             {
-                matches.Add(name);
+                results.Add(name);
             }
         }
 
-        return matches.OrderBy(name => name).ToList();
+        if (results.Count >= limit)
+        {
+            return results;
+        }
+
+        // Substring pass. ZSCAN gives no ordering guarantee and can return the same member twice
+        // across cursor pages, so results are collected, de-duplicated against the prefix hits,
+        // and sorted before being appended.
+        var substringMatches = new List<string>();
+        await foreach (var entry in _redisDatabase.SortedSetScanAsync(index, RedisKeys.IndexMatchPattern(query)))
+        {
+            var name = entry.Element.ToString();
+            if (seen.Add(name))
+            {
+                substringMatches.Add(name);
+            }
+
+            if (substringMatches.Count >= SubstringScanCeiling)
+            {
+                break;
+            }
+        }
+
+        substringMatches.Sort(StringComparer.Ordinal);
+        results.AddRange(substringMatches.Take(limit - results.Count));
+        return results;
     }
 }

@@ -38,6 +38,9 @@ Three projects are deployed as two containers, plus one legacy app that isn't.
    keyed by the journal `MessageEvent` enum; each handler declares its events in `Handles`.
 4. **`JournalMessageHandler`** reacts to `Docked` and `FSDJump`, writing through **`IDockingWriter`**
    and publishing a **`LiveEvent`** to the `eddn:events` channel via **`IEventPublisher`**.
+   Each `IDockingWriter` call dispatches its writes as a single **`IBatch`** — a station docking is
+   one round-trip, not six. Batches are pipelined, not transactional; that is safe here because
+   ingestion is a single writer and every operation is a commutative increment or idempotent set.
 5. **`EliteEvents.Web`** reads through **`IDockingReader`** / **`ICachedSystemCount`**, and its
    **`LiveEventHub`** holds one Redis subscription per pod, fanned out to SSE clients through
    per-client channels.
@@ -65,9 +68,41 @@ TTL**, refreshed on each write.
 - `heartbeat:eddn` — unix-ms timestamp of the last EDDN message, written by Ingestion at most
   every 5s. This is how the web tier's health check sees ingestion liveness across containers
 - `eddn:events` — pub/sub channel carrying `LiveEvent` frames for the ticker
+- `index:systems` / `index:carriers` — **search indexes.** Sorted sets, one member per searchable
+  name, **every member at score 0** and **no TTL**. See below
 
-Search (`GetMatchingSystemsAsync` / `GetMatchingCarriersAsync`) uses `SCAN` with glob patterns,
-which is why `DockingReader` holds both an `IServer` and an `IDatabase`.
+### Search and the indexes
+
+Search and the system count both used to `SCAN` the whole keyspace with a glob. The keyspace is
+dominated by per-station hashes, so that was O(keyspace) for something that only ever looks at
+names. Both now go through `index:systems` / `index:carriers`:
+
+- `GetMatchingSystemsAsync` / `GetMatchingCarriersAsync` do a `ZRANGEBYLEX` prefix lookup first,
+  then fall back to a `ZSCAN` with a `*query*` MATCH **only if the prefix pass didn't fill the
+  requested `limit`**. That `limit` is the knob that matters: ask for a small page and a prefix
+  query never touches the fallback, which is what makes keystroke typeahead viable.
+- `CachedSystemCount` is now a `ZCARD`. The 60s cache is no longer load-bearing, just a saved
+  round-trip on a number rendered on every page.
+- Results are **prefix matches first**, then substring matches, each alphabetical.
+
+Two constraints drive the design and are easy to break by accident:
+
+- **Every member must be at score 0.** `ZRANGEBYLEX` is only defined when scores are equal. This
+  is why the index can't also carry a last-seen timestamp and be pruned by score.
+- **The index therefore can't expire itself**, and a TTL on the key would drop the whole thing.
+  `SearchIndexMaintainer` (run hourly by `SearchIndexMaintenanceService` in Ingestion) reconciles
+  each index against the live keys instead, so the 30-day TTL on the data stays the single source
+  of truth. One rebuild covers stale entries, backfill, and recovering an index that
+  `allkeys-lru` evicted — it snapshots the index *before* scanning so a name the writer adds
+  mid-scan can't be mistaken for stale and removed.
+
+Consequence worth knowing: the web tier now depends on a key only Ingestion maintains. On the
+deploy that introduces the index, search returns nothing and the count reads 0 until Ingestion's
+first rebuild — seconds, and it retries on a short interval until one succeeds.
+
+Station names are no longer searchable. The old glob matched the station segment too, so a query
+could hit a system via one of its stations — but station names are stored verbatim while queries
+are uppercased, so in practice that only ever fired for stations that were already all-caps.
 
 ## Health endpoints
 
