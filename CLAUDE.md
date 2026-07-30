@@ -103,13 +103,32 @@ dotnet build
 dotnet run --project EliteEvents.Ingestion   # writer, health on http://localhost:5239
 dotnet run --project EliteEvents.Web         # site on http://localhost:5240
 
+# Tests — no Redis, no network of their own (but see the build note above)
+dotnet test EliteEvents.Eddn.Tests
+
 # Images and deployment (see k8s/README.md)
 ./build-image      # both images, linux/amd64, tagged from nbgv
 ./push-image       # to registry.digitalocean.com/meancat
 ./deploy-k8s <tag> # apply manifests, pin the tag, wait for both rollouts
 ```
 
-There are **no test projects** in the solution.
+### Tests
+
+**`EliteEvents.Eddn.Tests`** (xUnit) is the only test project. It covers `RedisKeys` and
+`WeeklyExpirationCalculator` — pure logic, so it needs no Redis and runs in well under a second.
+
+`RedisKeys` is tested as a **wire format**, not an implementation detail: ingestion and the web
+tier are separate containers whose only agreement is the shape of those strings, so a "harmless"
+change there splits the keyspace silently — the writer keeps writing, the reader finds nothing,
+the site just empties. The tests therefore assert key literals verbatim rather than rebuilding
+them from the same interpolation the production code uses. Several tests deliberately pin known
+quirks (search patterns matching the station segment, `ExtractName` returning `visits` for
+`systems:visits`); if one of those is ever intentionally changed, the failing test should be
+deleted on purpose, not worked around.
+
+Note that `dotnet test` builds `EliteEvents.Eddn` in Debug, which runs the NSwag target — so it
+needs network access to eddn.edcd.io like any other Debug build, even though the tests themselves
+touch nothing external.
 
 ### Local development setup
 

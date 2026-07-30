@@ -1,8 +1,8 @@
 # Roadmap — merge Visitors + Dashboard into one ASP.NET/htmx app
 
-Status: **Phase 5 complete except the final infrastructure deletions.** `elite.meancat.com` now
-serves from Kubernetes; the droplet and managed Valkey are still up as a rollback path. Branch:
-`blazor`. Only Phase 6 (optional) remains.
+Status: **Phases 1–5 complete.** `elite.meancat.com` serves from Kubernetes; the droplet and the
+managed Valkey were destroyed on 2026-07-30, so there is no longer a rollback path to the old
+stack. Only Phase 6 (optional) remains.
 
 > **Do not deploy the droplet stack from this branch.** `EliteEvents.Visitors` no longer ingests —
 > `Dockerfile` / `build-image` / `docker-compose.yaml` still build and run only that project, so
@@ -131,9 +131,10 @@ Quirks preserved as-is rather than silently "fixed":
       `BackgroundServiceExceptionBehavior.StopHost` stops the app. Today `restart: unless-stopped`
       masks it; under k8s this is a crash-loop on any Redis blip. **Fixed in Phase 2** — caught and
       logged per-message, and readiness rather than process death reports the outage.
-- [ ] **`/` and `/system-search` return 500 when Redis is down**, because both call
+- [x] **`/` and `/system-search` return 500 when Redis is down**, because both call
       `CachedSystemCount` in `OnInitializedAsync` with no try/catch, unlike every other page.
-      **Fix in Phase 3** when these pages are rewritten.
+      **Fixed in Phase 3** when these pages were rewritten — both now catch, log, and render a
+      generic line.
 
 ## Phase 2 — `EliteEvents.Ingestion`
 
@@ -364,15 +365,11 @@ prod.
       certificate. **Path is not preserved** — see below.
 - [x] Tear down the droplet stack (`docker-compose.yaml`, `Caddyfile`, `deploy-stack`,
       `.github/workflows/deploy.yml`, the root `Dockerfile`) once the k8s stack has proven itself.
-- [ ] **Destroy the managed Valkey** — deferred deliberately; see "Still running" below.
-      `elite-visitors-redis`, `db-s-1vcpu-1gb`, sfo3,
-      `160d042a-c022-434d-8c90-3932d7e1157c`, $15/mo. The k8s stack never touches it; its only
-      clients are the droplet containers, so it goes *after* the droplet is gone, not before.
-      ```bash
-      doctl databases delete 160d042a-c022-434d-8c90-3932d7e1157c
-      ```
-      In-cluster Redis replaces it outright: the data is 30-day TTL'd and disposable, so there is
-      nothing to migrate and a managed database was always more durability than this needs.
+- [x] **Destroy the managed Valkey** — done 2026-07-30, after the droplet. `elite-visitors-redis`,
+      `db-s-1vcpu-1gb`, sfo3, `160d042a-c022-434d-8c90-3932d7e1157c`, $15/mo. Its only clients were
+      the droplet containers, so it went *after* the droplet, not before. In-cluster Redis replaces
+      it outright: the data is 30-day TTL'd and disposable, so there was nothing to migrate and a
+      managed database was always more durability than this needs.
 - [x] Delete `EliteEvents.Visitors/` and `EliteEvents.Dashboard/`; update `EliteEvents.sln`.
 - [x] Rewrite `CLAUDE.md` for the new topology, including the corrections listed below. `README.md`
       rewritten too — it still described two front ends, and called the *Next* app
@@ -408,21 +405,34 @@ What went wrong on the way, worth remembering:
   pinned. It caused no harm here (both tags were the same digest) but it defeats immutable tags.
   `./deploy-k8s <tag>` is now the documented path for config changes too.
 
-### Still running
+### Decommissioned — 2026-07-30
 
-The droplet (`elite-visitor-web`, 164.92.109.111) and the managed Valkey are **deliberately left
-up** as a rollback path — pointing the two A records back at the droplet is a complete revert, and
-its containers are still running untouched. Both DNS records are now at TTL 300, so a revert takes
-minutes rather than an hour.
+The droplet (`elite-visitor-web`, 164.92.109.111) and the managed Valkey
+(`160d042a-c022-434d-8c90-3932d7e1157c`) were kept up for a day as a rollback path — pointing the
+A records back at the droplet would have been a complete revert — then deleted once the k8s stack
+had proven itself. Verified after deletion: `doctl compute droplet list` and `doctl databases list`
+show neither, no DNS record still points at 164.92.109.111, and `elite` / `elite-visitors` both
+resolve to the load balancer with every health endpoint returning 200.
 
-Once the k8s stack has a few quiet days, that's:
+**There is no longer a path back to the droplet stack.** Rolling back now means rolling forward — a
+previous image tag via `./deploy-k8s <tag>`.
 
-```bash
-doctl compute droplet delete elite-visitor-web
-doctl databases delete 160d042a-c022-434d-8c90-3932d7e1157c
-```
+Remaining DigitalOcean footprint: the `elite` cluster (2 × `s-1vcpu-2gb`), `elite-k8s-lb`, and the
+`meancat` registry — roughly $42/mo, down from ~$70.
 
-which drops the bill by roughly $15 (Valkey) plus the droplet, leaving ~$42/mo of k8s.
+### Loose ends left by the cutover — closed 2026-07-30
+
+- [x] **Retired `k8s.meancat.com`.** It was the side-by-side test hostname, and its stated reason to
+      exist — reaching the cluster while the public name still pointed at the droplet — died with
+      the droplet. Removed from `40-ingress.yaml` (host rule and TLS SAN) and the A record deleted.
+      `elite.meancat.com` is now the only public name.
+- [x] **DNS TTLs back to 3600** on `elite` and `elite-visitors`. 300 was for a fast revert that no
+      longer exists, and 3600 matches every other record in the zone.
+
+**Removing a hostname does not repeat the cutover outage.** Adding one broke TLS because the new
+name was not on the existing certificate; removing one leaves `elite-tls` serving the old,
+still-valid certificate until cert-manager writes its replacement. `elite-tls-4` went Ready in 17
+seconds, no pod restarted, and the site never stopped answering 200.
 
 ## Phase 6 — optional
 
@@ -431,9 +441,26 @@ which drops the bill by roughly $15 (Valkey) plus the droplet, leaving ~$42/mo o
    `index:systems` / `index:carriers` sorted sets for `ZRANGEBYLEX` prefix lookups. Prerequisite
    for htmx keystroke-triggered typeahead.
 2. **Batch the writes.** Each `Docked` event is 6 sequential round-trips today; `IBatch` makes it one.
-3. **First test project.** `EliteEvents.Eddn.Tests` over `RedisKeys` and
-   `WeeklyExpirationCalculator` — pure logic, no Redis required. Extracting the storage layer is
-   the natural moment, and the solution currently has zero tests.
+3. ~~**First test project.**~~ **Done 2026-07-30.** `EliteEvents.Eddn.Tests` (xUnit, 39 tests)
+   covers `RedisKeys` and `WeeklyExpirationCalculator` — pure logic, no Redis required.
+
+   `RedisKeys` is tested as a wire format: key literals are asserted verbatim rather than rebuilt
+   from the same interpolation the production code uses, because the two containers agree on
+   nothing else and a drifted key fails silently rather than loudly. A small glob matcher lets the
+   tests assert what a `SCAN` would and would not return without a Redis — which is how
+   `AllSystemStationsPattern` is pinned to match one key per *system* and not per station, the
+   difference between a correct system count and one inflated by the station count. Documented
+   quirks (substring search reaching the station segment, `ExtractName` returning `visits` for
+   `systems:visits`) are pinned as tests so they stay decisions.
+
+   `WeeklyExpirationCalculator` is checked against explicit dates on both sides of the 07:30
+   boundary, across month and year rollovers and both DST transitions, plus a year-long walk
+   asserting every result is a future Thursday 07:30 UTC no more than a week out. Also pinned:
+   Cronos excludes the starting instant, so a write landing exactly at 07:30 gets a full week
+   rather than a zero TTL that would delete the key being built.
+
+   Caveat: `dotnet test` builds `EliteEvents.Eddn` in Debug and therefore runs the NSwag target,
+   so it needs eddn.edcd.io like any other Debug build. The tests themselves touch nothing.
 
 ---
 
