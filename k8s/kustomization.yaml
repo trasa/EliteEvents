@@ -6,7 +6,7 @@ namespace: elite
 resources:
   - 00-namespace.yaml
   - 10-redis.yaml
-  - 20-ingestion.yaml
+  - 25-feedlistener.yaml
   - 30-web.yaml
   - 40-ingress.yaml
   - 45-redirect-ingress.yaml
