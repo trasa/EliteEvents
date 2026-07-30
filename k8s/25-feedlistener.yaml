@@ -22,7 +22,7 @@ spec:
 
   # The controller does not track image tags; this is the deployed version, the same way
   # kustomization.yaml records the other two. `./deploy-k8s <tag>` does not rewrite it.
-  image: registry.digitalocean.com/meancat/elite-ingestion:1.0.0-alpha.g8380e4311a
+  image: registry.digitalocean.com/meancat/elite-ingestion:1.0.0-alpha.gc430b0de1c
   imagePullSecrets:
     # DOKS's registry integration names this secret after the registry itself.
     - name: meancat
