@@ -144,7 +144,8 @@ dotnet test EliteEvents.Eddn.Tests
 # Images and deployment (see k8s/README.md)
 ./build-image      # both images, linux/amd64, tagged from nbgv
 ./push-image       # to registry.digitalocean.com/meancat
-./deploy-k8s <tag> # apply manifests, pin the tag, wait for both rollouts
+./deploy-k8s <tag> # write the tag into kustomization.yaml, apply, wait for both rollouts
+                   # commit kustomization.yaml afterwards — it records the deployed version
 ```
 
 ### Tests

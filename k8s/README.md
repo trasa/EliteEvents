@@ -142,16 +142,37 @@ VOL_ID=$(doctl compute volume list --format ID,Name --no-header | awk '/pvc-/{pr
 doctl projects resources assign "$PROJECT" --resource="do:volume:$VOL_ID"
 ```
 
+`deploy-k8s` rewrites the `newTag` values in `kustomization.yaml` and then applies. **Commit that
+file after a deploy** — it is how the repo records the running version.
+
 ### Changing config, not code
 
-Use `./deploy-k8s <tag>` for that too. A bare `kubectl apply -k k8s/` resets both Deployments to
-`:latest` — the tag committed in `kustomization.yaml` — and rolls the pods, whatever version you
-had pinned. `deploy-k8s` applies and then re-pins, so it is safe for ingress and config edits as
-well as releases:
+A bare `kubectl apply -k k8s/` is fine. Because the committed tags are the deployed tags, applying
+a clean checkout is a no-op for the Deployments and touches only what you actually edited:
 
 ```bash
-./deploy-k8s "$(kubectl -n elite get deploy web -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d: -f2)"
+kubectl apply -k k8s/
 ```
+
+This was not always true. The tags used to be committed as `:latest`, with the real version pinned
+after the fact by `kubectl set image`, so *any* bare apply reset both Deployments to `:latest` and
+rolled production off whatever was pinned — which is exactly what happened on 2026-07-30. The tag
+now goes into the manifests before they are applied, so `apply` is the entire deploy and there is
+no second field manager fighting over the image.
+
+Two consequences worth internalising:
+
+- **Editing `kustomization.yaml`'s `images:` block is a deploy instruction, not a default.** It is
+  no longer a placeholder you can ignore.
+- **Re-running `./deploy-k8s <same tag>` rolls nothing.** Every object reports `unchanged` and the
+  pods are left alone. The old script always rolled, because it always re-pinned away from
+  `:latest`.
+
+If an apply reports something as `configured` that you did not edit, note that the *first* apply
+after any manifest change is legitimately `configured` — it has to rewrite
+`last-applied-configuration`. Apply a second time; if it still says `configured`, that is real.
+Use `kubectl diff -k k8s/` to see what, bearing in mind it normalises server-defaulted fields away
+(see the `volumeClaimTemplates` comment in `10-redis.yaml`).
 
 ### First certificate
 

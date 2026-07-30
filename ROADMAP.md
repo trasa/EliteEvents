@@ -405,12 +405,22 @@ What went wrong on the way, worth remembering:
   pinned. It caused no harm here (both tags were the same digest) but it defeats immutable tags.
   `./deploy-k8s <tag>` is now the documented path for config changes too.
 
-  **This is not a theoretical hazard.** On 2026-07-30, while diagnosing the StatefulSet noise
+  **This was not a theoretical hazard.** On 2026-07-30, while diagnosing the StatefulSet noise
   below, a handful of bare `kubectl apply -k k8s/` calls rolled production off the pinned tag and
-  back onto `:latest` — exactly as documented, and still surprising in the moment. Re-pinning with
-  `kubectl set image` restored it. **Still open:** the real fix is to stop mutating the
-  Deployments after apply — put the tag into the `images:` transformer that `deploy-k8s` renders,
-  so `apply` is the whole deploy and a bare apply can't disagree with it.
+  back onto `:latest` — exactly as documented, and still surprising in the moment.
+
+  **Fixed the same day.** `deploy-k8s` now writes the tag into `kustomization.yaml`'s `images:`
+  block and then applies, so `apply` is the entire deploy and `kubectl set image` is gone along
+  with the second field manager it created. The committed tags are the deployed tags, which makes
+  a bare `kubectl apply -k k8s/` from a clean checkout a genuine no-op, and makes the running
+  version visible in git. Redeploying the same tag now rolls nothing at all — the old script
+  always rolled, because it always re-pinned away from `:latest`.
+
+  The trade is that `kustomization.yaml` must be committed after a deploy, and that its `images:`
+  block is now a deploy instruction rather than an ignorable default. `deploy-k8s` prints the
+  commit command when it leaves the file dirty, and refuses to apply at all if the rendered
+  manifests don't come out pinned to the requested tag on both images — a typo in that block would
+  otherwise deploy something nobody asked for.
 
 - **`kubectl apply` reported `statefulset.apps/redis configured` on every run** against an object
   that had never changed — generation stayed at 1 from creation. Fixed 2026-07-30 by spelling out

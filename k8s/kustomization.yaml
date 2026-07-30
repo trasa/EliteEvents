@@ -19,17 +19,18 @@ labels:
     pairs:
       app.kubernetes.io/part-of: elite-events
 
-# The deploy script pins these to a real version; latest is only the default so `kubectl apply -k`
-# works straight from a checkout.
+# These tags are what is deployed. `./deploy-k8s <tag>` rewrites them and then applies, so this
+# file is the record of the running version — commit it after a deploy.
 #
-# CAUTION: because of that default, a bare `kubectl apply -k k8s/` — even for an unrelated ingress
-# or config change — resets both Deployments to :latest and rolls the pods. Use `./deploy-k8s
-# <tag>`, which applies and then re-pins, for any change to this directory.
+# It used to say `latest`, with the real version pinned afterwards by `kubectl set image`. That
+# made any bare `kubectl apply -k k8s/` reset both Deployments to `:latest` and roll production,
+# which bit us on 2026-07-30. Now a clean checkout applies to exactly what is running, so a bare
+# apply is a no-op — but it also means an edit here is a real deploy instruction, not a default.
 images:
   - name: registry.digitalocean.com/meancat/elite-web
-    newTag: latest
+    newTag: 1.0.0-alpha.g8380e4311a
   - name: registry.digitalocean.com/meancat/elite-ingestion
-    newTag: latest
+    newTag: 1.0.0-alpha.g8380e4311a
 
 # The redis-auth Secret is deliberately absent: it is created once, out of band, and never
 # committed. See k8s/README.md.
