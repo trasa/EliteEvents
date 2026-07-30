@@ -15,11 +15,24 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 spec:
   ingressClassName: nginx
+  # elite.meancat.com is the canonical public name; k8s.meancat.com stays as a stable handle for
+  # reaching this cluster directly, independent of wherever the public name happens to point.
   tls:
     - hosts:
+        - elite.meancat.com
         - k8s.meancat.com
       secretName: elite-tls
   rules:
+    - host: elite.meancat.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
     - host: k8s.meancat.com
       http:
         paths:

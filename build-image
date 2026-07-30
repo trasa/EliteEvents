@@ -1,9 +1,6 @@
 #!/bin/bash
 # Builds both container images for the k8s stack. linux/amd64 explicitly, because the DOKS nodes
 # are amd64 and this is usually run from an arm64 Mac.
-#
-# The droplet stack's images (trasa/elite-visitors, trasa/elite-dashboard) are built by the old
-# root Dockerfile and are on their way out with Phase 5.
 set -euo pipefail
 
 REGISTRY="${REGISTRY:-registry.digitalocean.com/meancat}"

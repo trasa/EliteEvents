@@ -9,6 +9,7 @@ resources:
   - 20-ingestion.yaml
   - 30-web.yaml
   - 40-ingress.yaml
+  - 45-redirect-ingress.yaml
   # cluster-issuer.yaml is deliberately not here: ClusterIssuers are cluster-scoped, and kustomize
   # would stamp `namespace: elite` onto them because it can't know that about a CRD. They are
   # one-time cluster bootstrap, applied alongside cert-manager itself.
@@ -20,6 +21,10 @@ labels:
 
 # The deploy script pins these to a real version; latest is only the default so `kubectl apply -k`
 # works straight from a checkout.
+#
+# CAUTION: because of that default, a bare `kubectl apply -k k8s/` — even for an unrelated ingress
+# or config change — resets both Deployments to :latest and rolls the pods. Use `./deploy-k8s
+# <tag>`, which applies and then re-pins, for any change to this directory.
 images:
   - name: registry.digitalocean.com/meancat/elite-web
     newTag: latest

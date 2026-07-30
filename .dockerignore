@@ -21,9 +21,7 @@
 # from a clean checkout rather than from one developer's working tree.
 **/Generated/*.g.cs
 
-# Projects nothing here builds. EliteEvents.Visitors is deliberately NOT excluded: the old root
-# Dockerfile still builds it for the droplet stack until Phase 5 retires that path.
-EliteEvents.Dashboard
+# The one project nothing here builds.
 EliteEvents.JournalWeb
 
 k8s

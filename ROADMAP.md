@@ -1,7 +1,8 @@
 # Roadmap — merge Visitors + Dashboard into one ASP.NET/htmx app
 
-Status: **Phase 4 complete** — the k8s stack is live at https://k8s.meancat.com, running side by
-side with the droplets. Branch: `blazor`. Phase 5 (cutover and teardown) is next.
+Status: **Phase 5 complete except the final infrastructure deletions.** `elite.meancat.com` now
+serves from Kubernetes; the droplet and managed Valkey are still up as a rollback path. Branch:
+`blazor`. Only Phase 6 (optional) remains.
 
 > **Do not deploy the droplet stack from this branch.** `EliteEvents.Visitors` no longer ingests —
 > `Dockerfile` / `build-image` / `docker-compose.yaml` still build and run only that project, so
@@ -332,7 +333,7 @@ managed Valkey.
 | Registry | `meancat` (Basic, sfo3) — account-level, cannot be assigned to a project |
 | Cluster | `elite`, `f9d0a98f-91cb-42ee-9bc4-4814325bec84`, 1.36.0-do.3, 2 × `s-1vcpu-2gb`, **HA control plane false** |
 | Load balancer | `elite-k8s-lb`, `2d76117d-…`, 164.90.244.224 |
-| DNS | `k8s.meancat.com` A → 164.90.244.224, TTL 300 |
+| DNS | `elite`, `elite-visitors` and `k8s` all A → 164.90.244.224, TTL 300 (see Phase 5) |
 | Project | everything except the registry assigned to `elite-dangerous` (`2ca85a53-…`) |
 
 Verified end to end: all pages and JSON APIs 200 over valid TLS, SSE streaming live EDDN frames
@@ -358,11 +359,13 @@ prod.
 
 ## Phase 5 — Cut over and delete
 
-- [ ] Point `elite.meancat.com` at the k8s ingress.
-- [ ] Redirect `elite-visitors.meancat.com` → `elite.meancat.com`.
-- [ ] Tear down the droplet stack (`docker-compose.yaml`, `Caddyfile`, `deploy-stack`,
+- [x] Point `elite.meancat.com` at the k8s ingress.
+- [x] Redirect `elite-visitors.meancat.com` → `elite.meancat.com` (plus `www.`), 301 over its own
+      certificate. **Path is not preserved** — see below.
+- [x] Tear down the droplet stack (`docker-compose.yaml`, `Caddyfile`, `deploy-stack`,
       `.github/workflows/deploy.yml`, the root `Dockerfile`) once the k8s stack has proven itself.
-- [ ] **Destroy the managed Valkey** — `elite-visitors-redis`, `db-s-1vcpu-1gb`, sfo3,
+- [ ] **Destroy the managed Valkey** — deferred deliberately; see "Still running" below.
+      `elite-visitors-redis`, `db-s-1vcpu-1gb`, sfo3,
       `160d042a-c022-434d-8c90-3932d7e1157c`, $15/mo. The k8s stack never touches it; its only
       clients are the droplet containers, so it goes *after* the droplet is gone, not before.
       ```bash
@@ -370,8 +373,56 @@ prod.
       ```
       In-cluster Redis replaces it outright: the data is 30-day TTL'd and disposable, so there is
       nothing to migrate and a managed database was always more durability than this needs.
-- [ ] Delete `EliteEvents.Visitors/` and `EliteEvents.Dashboard/`; update `EliteEvents.sln`.
-- [ ] Rewrite `CLAUDE.md` for the new topology, including the corrections listed below.
+- [x] Delete `EliteEvents.Visitors/` and `EliteEvents.Dashboard/`; update `EliteEvents.sln`.
+- [x] Rewrite `CLAUDE.md` for the new topology, including the corrections listed below. `README.md`
+      rewritten too — it still described two front ends, and called the *Next* app
+      "EliteEvents.Web", which is now a different project entirely.
+
+### Cutover outcome — 2026-07-30
+
+`elite.meancat.com` serves from Kubernetes; `elite-visitors.meancat.com` and its `www.` alias 301
+to it. All three hostnames plus `k8s.meancat.com` share the load balancer.
+
+What went wrong on the way, worth remembering:
+
+- **The cutover caused a short outage of `elite.meancat.com`.** Adding a hostname to an existing
+  Ingress makes cert-manager re-issue, and until the new certificate lands nginx serves its
+  self-signed default for that name — TLS simply fails. Then cert-manager wedged: Let's Encrypt
+  had *issued* the certificate and the Order held it, but repeated optimistic-locking conflicts
+  meant the status was never written and the secret never updated. `kubectl delete
+  certificaterequest elite-tls-3` unstuck it and the secret populated in under 10 seconds.
+  Next time: create the new hostname's certificate *before* moving DNS.
+- **`kubectl apply -f k8s/45-...` put the Ingress in the wrong namespace.** It is kustomize that
+  injects `namespace: elite`; a bare `-f` on one file lands it in whatever context is current.
+  nginx still served it (it watches all namespaces), so the redirect worked while its certificate
+  quietly failed. Always `apply -k`.
+- **ingress-nginx rejects `$request_uri` in an annotation.** The admission webhook validates
+  annotation values as literal URLs, so `permanent-redirect` can only send everything to the site
+  root. Preserving the path would mean doing the redirect in the app; judged not worth it.
+- **A stale `<Compile Remove>` path was adding CS2002 warnings.** The Phase 4 NSwag fix used
+  `$(ProjectDir)`-absolute paths while the default glob yields relative ones, so the Remove matched
+  nothing and the Include duplicated every generated file. Relative paths now.
+- **`kubectl apply -k` silently un-pins the image.** `kustomization.yaml` carries `:latest` so a
+  fresh checkout applies cleanly, which means any apply — including an ingress-only change —
+  resets both Deployments to `:latest` and rolls the pods, discarding whatever `deploy-k8s`
+  pinned. It caused no harm here (both tags were the same digest) but it defeats immutable tags.
+  `./deploy-k8s <tag>` is now the documented path for config changes too.
+
+### Still running
+
+The droplet (`elite-visitor-web`, 164.92.109.111) and the managed Valkey are **deliberately left
+up** as a rollback path — pointing the two A records back at the droplet is a complete revert, and
+its containers are still running untouched. Both DNS records are now at TTL 300, so a revert takes
+minutes rather than an hour.
+
+Once the k8s stack has a few quiet days, that's:
+
+```bash
+doctl compute droplet delete elite-visitor-web
+doctl databases delete 160d042a-c022-434d-8c90-3932d7e1157c
+```
+
+which drops the bill by roughly $15 (Valkey) plus the droplet, leaving ~$42/mo of k8s.
 
 ## Phase 6 — optional
 

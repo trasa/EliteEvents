@@ -142,6 +142,17 @@ VOL_ID=$(doctl compute volume list --format ID,Name --no-header | awk '/pvc-/{pr
 doctl projects resources assign "$PROJECT" --resource="do:volume:$VOL_ID"
 ```
 
+### Changing config, not code
+
+Use `./deploy-k8s <tag>` for that too. A bare `kubectl apply -k k8s/` resets both Deployments to
+`:latest` — the tag committed in `kustomization.yaml` — and rolls the pods, whatever version you
+had pinned. `deploy-k8s` applies and then re-pins, so it is safe for ingress and config edits as
+well as releases:
+
+```bash
+./deploy-k8s "$(kubectl -n elite get deploy web -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d: -f2)"
+```
+
 ### First certificate
 
 Issue against staging before production — Let's Encrypt's rate limits punish a misconfigured

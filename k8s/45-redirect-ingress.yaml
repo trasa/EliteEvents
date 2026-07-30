@@ -1,0 +1,48 @@
+# The Blazor app's hostname, kept alive as a 301 to the canonical site. Separate Ingress because
+# permanent-redirect is a per-Ingress annotation and must not apply to elite.meancat.com.
+#
+# It still needs its own certificate: the redirect is served over HTTPS, and a browser validates
+# the certificate before it ever sees the 301.
+#
+# The path is NOT preserved — this redirects every URL to the site root. ingress-nginx's admission
+# webhook rejects `$request_uri` in an annotation value (it validates them as literal URLs), and
+# the generated directive is a bare `return 301 https://elite.meancat.com;`. Preserving the path
+# would mean doing the redirect in the app instead; deliberately not worth it for a handful of
+# old bookmarks.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: elite-visitors-redirect
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/permanent-redirect: https://elite.meancat.com
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - elite-visitors.meancat.com
+        - www.elite-visitors.meancat.com
+      secretName: elite-visitors-tls
+  rules:
+    # The backend is never reached — nginx answers with the redirect — but a rule still requires
+    # one, so it points at the same Service.
+    - host: elite-visitors.meancat.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+    - host: www.elite-visitors.meancat.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http

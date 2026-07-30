@@ -33,9 +33,12 @@
              just created are not in @(Compile) yet. Re-adding them here is what lets a build
              generate and compile them in one pass; Remove first keeps it idempotent for the
              usual case where they already existed. -->
+        <!-- Paths must be relative here: the default glob yields items like
+             "Generated/Journal.g.cs", so an absolute Remove matches nothing and the Include then
+             adds a duplicate (CS2002). -->
         <ItemGroup>
-            <Compile Remove="$(ProjectDir)Generated/*.g.cs" />
-            <Compile Include="$(ProjectDir)Generated/*.g.cs" />
+            <Compile Remove="Generated/*.g.cs" />
+            <Compile Include="Generated/*.g.cs" />
         </ItemGroup>
     </Target>
 
