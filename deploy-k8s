@@ -33,22 +33,42 @@ tmp="$(mktemp)"
 sed -E "s|^([[:space:]]*newTag:[[:space:]]*).*$|\1${VERSION}|" "$KUSTOMIZATION" > "$tmp"
 mv "$tmp" "$KUSTOMIZATION"
 
-# Never deploy a half-substituted manifest: if the rendered output does not carry the tag on both
-# images, the sed above did not match what it expected and applying would deploy the wrong thing.
+# Never deploy a half-substituted manifest. The two images are pinned in two different files —
+# the web tag by the sed above, the ingestion tag by hand in k8s/25-feedlistener.yaml, which the
+# FeedListener controller reads and kustomize's images: block does not touch. Requiring both to
+# carry this VERSION is what stops a deploy that ships one tier and silently leaves the other on
+# the previous build.
 rendered="$(kubectl kustomize k8s/)"
-pinned="$(printf '%s\n' "$rendered" | grep -cE "image: registry\.digitalocean\.com/meancat/elite-(web|ingestion):${VERSION}$" || true)"
-if [ "$pinned" -ne 2 ]; then
+web_pinned="$(printf '%s\n' "$rendered" | grep -cE "image: registry\.digitalocean\.com/meancat/elite-web:${VERSION}$" || true)"
+ingestion_pinned="$(printf '%s\n' "$rendered" | grep -cE "image: registry\.digitalocean\.com/meancat/elite-ingestion:${VERSION}$" || true)"
+if [ "$web_pinned" -lt 1 ] || [ "$ingestion_pinned" -lt 1 ]; then
     cp "$backup" "$KUSTOMIZATION"
-    echo "Refusing to deploy: expected both images pinned to ${VERSION}, found ${pinned}." >&2
-    echo "Reverted ${KUSTOMIZATION}. Check its images: block." >&2
+    echo "Refusing to deploy: expected both images pinned to ${VERSION}." >&2
+    echo "  elite-web:       ${web_pinned} (from ${KUSTOMIZATION} images: block)" >&2
+    echo "  elite-ingestion: ${ingestion_pinned} (from k8s/25-feedlistener.yaml spec.image)" >&2
+    echo "Reverted ${KUSTOMIZATION}. An ingestion upgrade is a hand edit to spec.image." >&2
     exit 1
 fi
 
 kubectl apply -k k8s/
 
-# Ingestion first: it is a single writer with strategy Recreate, so it is briefly down and the
-# rollout should be seen through before the web tier starts.
-kubectl -n "$NAMESPACE" rollout status deployment/ingestion --timeout=5m
+# Ingestion first: each shard is a single writer with strategy Recreate, so it is briefly down and
+# the rollout should be seen through before the web tier starts.
+#
+# The shards are named by the FeedListener controller (eddn-0, eddn-1, ...), not by any manifest
+# here, so they are discovered by label rather than named. `rollout status` takes no selector.
+shards="$(kubectl -n "$NAMESPACE" get deploy \
+    -l app.kubernetes.io/name=feed-listener \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')"
+if [ -z "$shards" ]; then
+    echo "Refusing to report success: no feed-listener shards found in ${NAMESPACE}." >&2
+    echo "Is the operator running, and is k8s/25-feedlistener.yaml in kustomization.yaml?" >&2
+    exit 1
+fi
+for shard in $shards; do
+    kubectl -n "$NAMESPACE" rollout status "deployment/${shard}" --timeout=5m
+done
+
 kubectl -n "$NAMESPACE" rollout status deployment/web --timeout=5m
 
 echo "Deployed ${VERSION}"
