@@ -9,9 +9,11 @@ import (
 	"strconv"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -124,6 +126,11 @@ func (r *FeedListenerReconciler) reconcileStatus(ctx context.Context, fl *elitev
 	if lastMessage != nil {
 		fl.Status.LastMessageTime = &metav1.Time{Time: *lastMessage}
 	}
+	if err := r.observeIndexMaintenance(ctx, fl); err != nil {
+		// Worth a line, not worth failing the reconcile: this is a reported timestamp, and
+		// losing it does not affect whether the feed is running or the indexes are maintained.
+		log.V(1).Info("reading maintenance cronjob status", "error", err)
+	}
 
 	setAvailability(fl, ready)
 	streaming := setStreaming(fl, streamingShards)
@@ -135,6 +142,31 @@ func (r *FeedListenerReconciler) reconcileStatus(ctx context.Context, fl *elitev
 	}
 
 	return ctrl.Result{RequeueAfter: statusPollInterval}, nil
+}
+
+// observeIndexMaintenance copies the CronJob's last successful run onto status.
+//
+// It is read from the CronJob rather than tracked by the controller because the CronJob is where
+// the truth is — the controller does not run the rebuild and has no other way to know it
+// happened. The field stays empty while upkeep runs in-process for the same reason: there is
+// nothing the controller can observe, and inventing a timestamp would be worse than an empty one.
+func (r *FeedListenerReconciler) observeIndexMaintenance(ctx context.Context, fl *elitev1alpha1.FeedListener) error {
+	if _, scheduled := maintenanceSchedule(fl); !scheduled {
+		fl.Status.LastIndexRebuildTime = nil
+		return nil
+	}
+
+	var cronJob batchv1.CronJob
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      maintenanceCronJobName(fl),
+		Namespace: fl.Namespace,
+	}, &cronJob)
+	if err != nil {
+		return client.IgnoreNotFound(err)
+	}
+
+	fl.Status.LastIndexRebuildTime = cronJob.Status.LastSuccessfulTime
+	return nil
 }
 
 func setAvailability(fl *elitev1alpha1.FeedListener, ready int32) {

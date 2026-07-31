@@ -37,6 +37,7 @@ type FeedListenerReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile drives a FeedListener toward its declared state: one ConfigMap of shared feed
 // configuration, one Service fronting the health endpoints, and one Deployment per shard.
@@ -76,6 +77,10 @@ func (r *FeedListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	if err := r.reconcileShards(ctx, &fl, configHash); err != nil {
 		return r.failed(ctx, &fl, "ShardError", err)
+	}
+
+	if err := r.reconcileMaintenance(ctx, &fl); err != nil {
+		return r.failed(ctx, &fl, "MaintenanceError", err)
 	}
 
 	log.V(1).Info("reconciled feed listener", "consumers", fl.Spec.Consumers, "configHash", configHash)
@@ -156,6 +161,62 @@ func (r *FeedListenerReconciler) reconcileShards(ctx context.Context, fl *elitev
 	return r.pruneStaleShards(ctx, fl)
 }
 
+// reconcileMaintenance keeps the index-rebuild CronJob in step with spec.indexMaintenance,
+// including removing it when the schedule is cleared.
+//
+// The delete half matters as much as the create half, and for the same reason shard pruning does:
+// clearing the schedule hands the work back to the consumers' in-process timer, and a CronJob
+// left behind would keep firing alongside it. Two things reconciling one index is not a
+// correctness bug — the rebuild is idempotent — but it is a full duplicate scan of the keyspace
+// on every tick, which is the exact cost this change exists to remove.
+func (r *FeedListenerReconciler) reconcileMaintenance(ctx context.Context, fl *elitev1alpha1.FeedListener) error {
+	log := logf.FromContext(ctx)
+
+	if _, scheduled := maintenanceSchedule(fl); !scheduled {
+		return r.deleteMaintenanceCronJob(ctx, fl)
+	}
+
+	desired := BuildMaintenanceCronJob(fl)
+
+	cronJob := &batchv1.CronJob{}
+	cronJob.Name = desired.Name
+	cronJob.Namespace = desired.Namespace
+
+	// Unlike the drain Job, a CronJob is safely updatable: it is a template, not a running pod,
+	// so a changed image or schedule simply applies to the next tick.
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cronJob, func() error {
+		cronJob.Labels = desired.Labels
+		cronJob.Spec.Schedule = desired.Spec.Schedule
+		cronJob.Spec.ConcurrencyPolicy = desired.Spec.ConcurrencyPolicy
+		cronJob.Spec.StartingDeadlineSeconds = desired.Spec.StartingDeadlineSeconds
+		cronJob.Spec.SuccessfulJobsHistoryLimit = desired.Spec.SuccessfulJobsHistoryLimit
+		cronJob.Spec.FailedJobsHistoryLimit = desired.Spec.FailedJobsHistoryLimit
+		cronJob.Spec.JobTemplate = desired.Spec.JobTemplate
+		return controllerutil.SetControllerReference(fl, cronJob, r.Scheme)
+	})
+	if err != nil {
+		return fmt.Errorf("reconciling maintenance cronjob: %w", err)
+	}
+
+	log.V(1).Info("reconciled index maintenance", "schedule", desired.Spec.Schedule)
+	return nil
+}
+
+func (r *FeedListenerReconciler) deleteMaintenanceCronJob(ctx context.Context, fl *elitev1alpha1.FeedListener) error {
+	cronJob := &batchv1.CronJob{}
+	cronJob.Name = maintenanceCronJobName(fl)
+	cronJob.Namespace = fl.Namespace
+
+	if err := r.Delete(ctx, cronJob); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("removing maintenance cronjob: %w", err)
+	}
+	logf.FromContext(ctx).Info("removed index maintenance cronjob; upkeep returns to shard 0")
+	return nil
+}
+
 func (r *FeedListenerReconciler) pruneStaleShards(ctx context.Context, fl *elitev1alpha1.FeedListener) error {
 	log := logf.FromContext(ctx)
 
@@ -217,6 +278,7 @@ func (r *FeedListenerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Service{}).
 		Owns(&batchv1.Job{}).
+		Owns(&batchv1.CronJob{}).
 		Named("feedlistener").
 		Complete(r)
 }

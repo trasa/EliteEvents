@@ -23,6 +23,13 @@ if (args.Contains(PurgeCommand.Flag))
     return await PurgeCommand.RunAsync(args);
 }
 
+if (args.Contains(RebuildCommand.Flag))
+{
+    // Maintenance mode, invoked by the CronJob the FeedListener controller owns. Same reasoning
+    // as the purge above, and the same shape: connect, reconcile the indexes, exit.
+    return await RebuildCommand.RunAsync(args);
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration
@@ -37,6 +44,8 @@ builder.Configuration.AddEnvironmentVariables();
 
 // Configuration / IOptions
 builder.Services.Configure<EddnOptions>(builder.Configuration.GetSection("Eddn"));
+builder.Services.Configure<IndexMaintenanceOptions>(
+    builder.Configuration.GetSection(IndexMaintenanceOptions.SectionName));
 
 // eddn
 builder.Services.AddEddnStream()

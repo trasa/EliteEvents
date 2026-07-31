@@ -39,6 +39,19 @@ spec:
   # automatic recovery starts rather than at some unrelated moment.
   reconnectAfterSilence: 2m
 
+  # Search-index upkeep. index:systems and index:carriers cannot expire themselves, so they are
+  # reconciled against the live 30-day data on a schedule. Omitting this block is the normal
+  # case: the controller defaults it to an hourly CronJob running the ingestion image, and
+  # switches the consumers' own in-process timer off so exactly one thing rebuilds.
+  #
+  # Set `schedule: ""` to hand the work back to consumer shard 0. That is the fallback, not the
+  # default — a rebuild is a full pass over the keyspace, and running it inside the consumers
+  # ties it to a process whose job is to never block.
+  # indexMaintenance:
+  #   schedule: "17 * * * *"
+
   # Deleting this resource drains index:systems and index:carriers, which carry no TTL and would
-  # otherwise be orphaned. Set retainIndexesOnDelete: true to keep them — e.g. when replacing the
-  # resource in place rather than retiring the feed.
+  # otherwise be orphaned. The finalizer stops the rebuild CronJob first — a rebuild racing the
+  # purge would restore the whole index rather than merely dirtying it. Set
+  # retainIndexesOnDelete: true to keep them — e.g. when replacing the resource in place rather
+  # than retiring the feed.

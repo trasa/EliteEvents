@@ -98,6 +98,44 @@ spec:
                   type: object
                   x-kubernetes-map-type: atomic
                 type: array
+              indexMaintenance:
+                default: {}
+                description: |-
+                  indexMaintenance schedules rebuilds of this feed's Redis search indexes.
+
+                  The empty-object default is what makes the CronJob the normal path: the API server fills
+                  this in when it is omitted, and the nested schedule default then applies. A nil pointer
+                  only occurs for objects built in-process without defaulting, and means no CronJob.
+                properties:
+                  activeDeadlineSeconds:
+                    default: 900
+                    description: |-
+                      activeDeadlineSeconds bounds a single rebuild. A pass that has run this long is not going
+                      to finish usefully before the next tick, and leaving it running would have two full scans
+                      of the same keyspace overlap.
+                    format: int64
+                    minimum: 60
+                    type: integer
+                  schedule:
+                    default: 17 * * * *
+                    description: |-
+                      schedule is a cron expression for the rebuild Job, interpreted in the cluster's timezone.
+
+                      An empty schedule creates no CronJob and hands the work back to a timer inside consumer
+                      shard 0. That is the local-development shape and the fallback; it is not the default,
+                      because in-process upkeep ties a full keyspace pass to the lifetime of a pod whose actual
+                      job is to never block on anything.
+
+                      The schedule is validated by the API server when the CronJob is created — a malformed
+                      expression surfaces as a Degraded condition and a MaintenanceError event, not as a silently
+                      skipped rebuild.
+
+                      It is a pointer so that "unset" and "explicitly empty" stay distinguishable. With a plain
+                      string, omitempty drops "" from the serialized object, the API server sees an absent field
+                      and re-applies the default — making the schedule impossible to turn off.
+                    maxLength: 200
+                    type: string
+                type: object
               reconnectAfterSilence:
                 default: 2m
                 description: |-
@@ -276,6 +314,13 @@ spec:
                   was written.
                 format: int32
                 type: integer
+              lastIndexRebuildTime:
+                description: |-
+                  lastIndexRebuildTime is when the maintenance CronJob last completed successfully. Empty
+                  while a schedule exists but has not yet fired, and while upkeep runs in-process — the
+                  controller reports only what it can observe from the Job it owns.
+                format: date-time
+                type: string
               lastMessageTime:
                 description: |-
                   lastMessageTime is the most recent message timestamp reported by any consumer. This is

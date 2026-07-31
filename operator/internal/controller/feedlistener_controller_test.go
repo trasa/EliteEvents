@@ -191,7 +191,136 @@ var _ = Describe("FeedListener Controller", func() {
 		})
 	})
 
+	Context("when scheduling index maintenance", func() {
+		cronJobKey := func() types.NamespacedName {
+			return types.NamespacedName{Name: name + "-rebuild", Namespace: namespace}
+		}
+
+		// The schedule arrives by API-server defaulting, not from anything the test sets. That
+		// is the production path too: k8s/25-feedlistener.yaml does not mention indexMaintenance.
+		It("creates a rebuild CronJob by default and switches the in-process timer off", func() {
+			Expect(k8sClient.Create(ctx, newFeedListener(2))).To(Succeed())
+			reconcileUntilStable()
+
+			var fl elitev1alpha1.FeedListener
+			Expect(k8sClient.Get(ctx, key, &fl)).To(Succeed())
+			Expect(fl.Spec.IndexMaintenance).NotTo(BeNil(), "defaulting should have filled this in")
+			Expect(fl.Spec.IndexMaintenance.Schedule).To(HaveValue(Not(BeEmpty())))
+
+			var cronJob batchv1.CronJob
+			Expect(k8sClient.Get(ctx, cronJobKey(), &cronJob)).To(Succeed())
+			Expect(cronJob.Spec.Schedule).To(Equal(*fl.Spec.IndexMaintenance.Schedule))
+			Expect(cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args).
+				To(ContainElement("--rebuild-indexes"))
+
+			var cm corev1.ConfigMap
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: name + "-config", Namespace: namespace}, &cm)).To(Succeed())
+			Expect(cm.Data).To(HaveKeyWithValue("IndexMaintenance__Periodic", "false"),
+				"the CronJob owns the schedule, so the consumers must not also run one")
+		})
+
+		// Clearing the schedule hands upkeep back to shard 0. A CronJob left behind would keep
+		// firing alongside it — a duplicate full keyspace scan every tick.
+		It("removes the CronJob when the schedule is cleared", func() {
+			Expect(k8sClient.Create(ctx, newFeedListener(1))).To(Succeed())
+			reconcileUntilStable()
+			Expect(k8sClient.Get(ctx, cronJobKey(), &batchv1.CronJob{})).To(Succeed())
+
+			var fl elitev1alpha1.FeedListener
+			Expect(k8sClient.Get(ctx, key, &fl)).To(Succeed())
+			// An explicit empty string, which only survives the round-trip because Schedule is a
+			// pointer — with a plain string the API server would re-apply the default here.
+			fl.Spec.IndexMaintenance.Schedule = ptr("")
+			Expect(k8sClient.Update(ctx, &fl)).To(Succeed())
+			reconcileUntilStable()
+
+			Expect(k8sClient.Get(ctx, key, &fl)).To(Succeed())
+			Expect(fl.Spec.IndexMaintenance.Schedule).To(HaveValue(BeEmpty()),
+				"the cleared schedule must not be re-defaulted, or it could never be turned off")
+
+			err := k8sClient.Get(ctx, cronJobKey(), &batchv1.CronJob{})
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the CronJob should have been removed")
+
+			var cm corev1.ConfigMap
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: name + "-config", Namespace: namespace}, &cm)).To(Succeed())
+			Expect(cm.Data).To(HaveKeyWithValue("IndexMaintenance__Periodic", "true"),
+				"with no CronJob, the consumers must take the schedule back")
+		})
+
+		It("reports the last successful rebuild on status", func() {
+			Expect(k8sClient.Create(ctx, newFeedListener(1))).To(Succeed())
+			reconcileUntilStable()
+
+			var cronJob batchv1.CronJob
+			Expect(k8sClient.Get(ctx, cronJobKey(), &cronJob)).To(Succeed())
+			ranAt := metav1.NewTime(time.Now().Add(-time.Minute).Truncate(time.Second))
+			cronJob.Status.LastSuccessfulTime = &ranAt
+			Expect(k8sClient.Status().Update(ctx, &cronJob)).To(Succeed())
+
+			reconcileUntilStable()
+
+			var fl elitev1alpha1.FeedListener
+			Expect(k8sClient.Get(ctx, key, &fl)).To(Succeed())
+			Expect(fl.Status.LastIndexRebuildTime).NotTo(BeNil())
+			Expect(fl.Status.LastIndexRebuildTime.Time).To(BeTemporally("==", ranAt.Time))
+		})
+	})
+
 	Context("when deleting a feed", func() {
+		// A rebuild racing the purge would not merely dirty the indexes, it would rewrite them
+		// wholesale — the purge would appear to succeed and the keys would be back seconds later.
+		It("stops the maintenance CronJob and waits for an in-flight rebuild", func() {
+			Expect(k8sClient.Create(ctx, newFeedListener(1))).To(Succeed())
+			reconcileUntilStable()
+
+			cronJobKey := types.NamespacedName{Name: name + "-rebuild", Namespace: namespace}
+			drainKey := types.NamespacedName{Name: name + "-drain", Namespace: namespace}
+			Expect(k8sClient.Get(ctx, cronJobKey, &batchv1.CronJob{})).To(Succeed())
+
+			// A rebuild pod mid-pass. Deleting the CronJob does not stop one already running, and
+			// it is the dangerous case: a rebuild writes the whole index, so it would not dirty
+			// the purge's result, it would restore it wholesale.
+			rebuildPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name + "-rebuild-inflight",
+					Namespace: namespace,
+					Labels: map[string]string{
+						nameLabel:      "feed-maintenance",
+						instanceLabel:  name,
+						partOfLabel:    "elite-events",
+						componentLabel: "maintenance",
+					},
+				},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{
+					Name: "rebuild", Image: "elite-ingestion:test",
+				}}},
+			}
+			Expect(k8sClient.Create(ctx, rebuildPod)).To(Succeed())
+
+			var fl elitev1alpha1.FeedListener
+			Expect(k8sClient.Get(ctx, key, &fl)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, &fl)).To(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+
+			err = k8sClient.Get(ctx, cronJobKey, &batchv1.CronJob{})
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(),
+				"the CronJob must be gone before the purge runs, or a tick could undo it")
+
+			err = k8sClient.Get(ctx, drainKey, &batchv1.Job{})
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(),
+				"the purge must not start while a rebuild pod is still running")
+
+			// Once it exits, teardown proceeds.
+			Expect(k8sClient.Delete(ctx, rebuildPod, client.GracePeriodSeconds(0))).To(Succeed())
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, drainKey, &batchv1.Job{})).To(Succeed())
+		})
+
 		// The ordering here is the whole reason the finalizer exists: purging while a consumer
 		// is still subscribed would be undone by the next write it makes.
 		It("stops the consumers before starting the drain, then releases", func() {

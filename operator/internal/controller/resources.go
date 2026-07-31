@@ -10,6 +10,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -49,6 +50,32 @@ func configMapName(fl *elitev1alpha1.FeedListener) string { return fl.Name + "-c
 func serviceName(fl *elitev1alpha1.FeedListener) string   { return fl.Name }
 func shardDeploymentName(fl *elitev1alpha1.FeedListener, shard int32) string {
 	return fmt.Sprintf("%s-%d", fl.Name, shard)
+}
+func maintenanceCronJobName(fl *elitev1alpha1.FeedListener) string { return fl.Name + "-rebuild" }
+
+// maintenanceSchedule returns the cron expression for index upkeep, and whether there is one.
+// A nil spec, a nil schedule and an explicitly empty one all mean "no CronJob" — the distinction
+// between the last two matters only to the API server's defaulting; see
+// IndexMaintenanceSpec.Schedule.
+func maintenanceSchedule(fl *elitev1alpha1.FeedListener) (string, bool) {
+	if fl.Spec.IndexMaintenance == nil || fl.Spec.IndexMaintenance.Schedule == nil {
+		return "", false
+	}
+	schedule := *fl.Spec.IndexMaintenance.Schedule
+	return schedule, schedule != ""
+}
+
+// maintenanceLabels deliberately do not match selectorLabels, for the same reason drainLabels do
+// not: the rebuild pod must be invisible both to the consumer Service — it serves no HTTP at all,
+// and an endpoint pointing at it would be a black hole — and to the pod waits during teardown,
+// which are sequenced separately.
+func maintenanceLabels(fl *elitev1alpha1.FeedListener) map[string]string {
+	return map[string]string{
+		nameLabel:      "feed-maintenance",
+		instanceLabel:  fl.Name,
+		partOfLabel:    "elite-events",
+		componentLabel: "maintenance",
+	}
 }
 
 // selectorLabels identify every pod belonging to a FeedListener. They must never include
@@ -92,12 +119,20 @@ func aspNetDuration(d time.Duration) string {
 // deliberately absent — it is the one value that differs per Deployment, and putting it here
 // would mean one ConfigMap per shard for a single differing key.
 func buildConfigData(fl *elitev1alpha1.FeedListener) map[string]string {
+	// Exactly one thing may rebuild the indexes on a schedule. This key is the handoff: when a
+	// CronJob exists the consumers' own timer is switched off, and when it does not they keep it.
+	// It is written either way rather than only when false, so the ConfigMap states which mode
+	// the pods are in — and so that adding or removing a schedule changes the config hash and
+	// actually rolls them.
+	_, scheduled := maintenanceSchedule(fl)
+
 	data := map[string]string{
 		"ASPNETCORE_ENVIRONMENT":      "Production",
 		"ConnectionStrings__Redis":    fl.Spec.Redis.ConnectionString,
 		"Eddn__StreamUrl":             fl.Spec.RelayEndpoint,
 		"Eddn__ShardCount":            strconv.Itoa(int(fl.Spec.Consumers)),
 		"Eddn__ReconnectAfterSilence": aspNetDuration(fl.Spec.ReconnectAfterSilence.Duration),
+		"IndexMaintenance__Periodic":  strconv.FormatBool(!scheduled),
 	}
 	if fl.Spec.Redis.AuthSecret != nil {
 		data["REDIS_AUTH_FILE"] = redisAuthMountPath + "/" + fl.Spec.Redis.AuthSecret.Key
@@ -273,6 +308,102 @@ func BuildShardDeployment(fl *elitev1alpha1.FeedListener, shard int32, configHas
 					Annotations: map[string]string{configHashAnnotation: configHash},
 				},
 				Spec: podSpec,
+			},
+		},
+	}
+}
+
+// oneShotPodSpec renders a pod that runs the ingestion image as a command and exits: the drain
+// during teardown, the index rebuild on a schedule.
+//
+// Both reuse the consumer image and the consumer ConfigMap on purpose. The image carries
+// RedisKeys, so the keyspace keeps exactly one definition and the operator never has to name a
+// Redis key in Go; the ConfigMap means these connect to precisely the Redis the consumers wrote
+// to, with no second copy of the connection details to drift.
+func oneShotPodSpec(fl *elitev1alpha1.FeedListener, containerName, arg string) corev1.PodSpec {
+	container := corev1.Container{
+		Name:  containerName,
+		Image: fl.Spec.Image,
+		Args:  []string{arg},
+		EnvFrom: []corev1.EnvFromSource{{
+			ConfigMapRef: &corev1.ConfigMapEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: configMapName(fl)},
+			},
+		}},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: ptr(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+	}
+
+	spec := corev1.PodSpec{
+		RestartPolicy:    corev1.RestartPolicyNever,
+		ImagePullSecrets: fl.Spec.ImagePullSecrets,
+		SecurityContext:  &corev1.PodSecurityContext{RunAsNonRoot: ptr(true)},
+		Containers:       []corev1.Container{container},
+	}
+
+	if fl.Spec.Redis.AuthSecret != nil {
+		spec.Volumes = []corev1.Volume{{
+			Name: redisAuthVolume,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{SecretName: fl.Spec.Redis.AuthSecret.Name},
+			},
+		}}
+		spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{
+			Name:      redisAuthVolume,
+			MountPath: redisAuthMountPath,
+			ReadOnly:  true,
+		}}
+	}
+
+	return spec
+}
+
+// BuildMaintenanceCronJob renders the scheduled index rebuild.
+//
+// This exists because the rebuild is not shardable. Ingestion is partitioned by message hash, but
+// a rebuild reconciles the entire index against the entire keyspace — so running it inside the
+// consumers means every shard performing the same full pass to reach the same result. One
+// CronJob does it once, and the history it leaves behind is a record of upkeep that a timer
+// inside a long-lived process does not produce.
+//
+// ConcurrencyPolicy is Forbid for the same reason: two overlapping passes duplicate a scan of the
+// whole keyspace to converge on the identical answer.
+func BuildMaintenanceCronJob(fl *elitev1alpha1.FeedListener) *batchv1.CronJob {
+	schedule, _ := maintenanceSchedule(fl)
+	labels := maintenanceLabels(fl)
+
+	var activeDeadline *int64
+	if fl.Spec.IndexMaintenance != nil && fl.Spec.IndexMaintenance.ActiveDeadlineSeconds > 0 {
+		activeDeadline = ptr(fl.Spec.IndexMaintenance.ActiveDeadlineSeconds)
+	}
+
+	return &batchv1.CronJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      maintenanceCronJobName(fl),
+			Namespace: fl.Namespace,
+			Labels:    labels,
+		},
+		Spec: batchv1.CronJobSpec{
+			Schedule:          schedule,
+			ConcurrencyPolicy: batchv1.ForbidConcurrent,
+			// A missed tick is not worth catching up on. The next one does the same full
+			// reconcile, and a burst of backfilled runs after a control-plane outage would all
+			// scan the same keyspace to the same end.
+			StartingDeadlineSeconds:    ptr(int64(60)),
+			SuccessfulJobsHistoryLimit: ptr(int32(3)),
+			FailedJobsHistoryLimit:     ptr(int32(3)),
+			JobTemplate: batchv1.JobTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: batchv1.JobSpec{
+					BackoffLimit:          ptr(int32(2)),
+					ActiveDeadlineSeconds: activeDeadline,
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: labels},
+						Spec:       oneShotPodSpec(fl, "rebuild", "--rebuild-indexes"),
+					},
+				},
 			},
 		},
 	}

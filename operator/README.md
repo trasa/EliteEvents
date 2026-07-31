@@ -26,15 +26,22 @@ Three properties of an EDDN subscription are things a Deployment cannot express:
    all. `status.conditions` separates `Available` (pods are up) from `Streaming` (the
    subscription is actually delivering, on every shard).
 
+4. **Some of the work is not shardable.** Ingestion is partitioned by message hash, but rebuilding
+   `index:systems` / `index:carriers` reconciles the *whole* index against the *whole* keyspace.
+   Run inside the consumers, that means every shard performing the same full pass to reach the
+   same result. `spec.indexMaintenance.schedule` moves it to one CronJob and switches the
+   in-process timer off, and the ConfigMap key that does the switching is what keeps exactly one
+   owner — see below.
+
 ## Layout
 
 | Path | What |
 |---|---|
 | `api/v1alpha1/feedlistener_types.go` | The CRD: spec, status, conditions, finalizer name |
-| `internal/controller/resources.go` | Pure builders for the ConfigMap, Service, and per-shard Deployment |
-| `internal/controller/feedlistener_controller.go` | Reconcile: children, owner refs, shard pruning |
-| `internal/controller/status.go` | Per-pod `/health/stream` polling → conditions |
-| `internal/controller/finalizer.go` | Ordered teardown: stop consumers → drain Job → release |
+| `internal/controller/resources.go` | Pure builders for the ConfigMap, Service, per-shard Deployment and maintenance CronJob |
+| `internal/controller/feedlistener_controller.go` | Reconcile: children, owner refs, shard pruning, maintenance schedule |
+| `internal/controller/status.go` | Per-pod `/health/stream` polling → conditions; last rebuild from the CronJob |
+| `internal/controller/finalizer.go` | Ordered teardown: stop writers → drain Job → release |
 
 Each shard is its own `Deployment` with `replicas: 1` and `strategy: Recreate`, not one
 Deployment with N replicas. That is what lets each pod carry a distinct `Eddn__ShardIndex`, and
@@ -53,6 +60,18 @@ deleting keys by name from Go. What the two sides do agree on:
 | `Eddn__ReconnectAfterSilence` | Rendered as `HH:MM:SS` — .NET's `TimeSpan` parser rejects Go's `2m0s` |
 | `GET /health/stream` | JSON: `lastMessageUtc`, `messagesReceived`, `messagesHandled`, `shardIndex`, `shardCount` |
 | `--purge-indexes` | One-shot teardown mode, run by the drain Job |
+| `--rebuild-indexes` | One-shot index reconcile, run by the maintenance CronJob |
+| `IndexMaintenance__Periodic` | `false` when a CronJob owns the schedule, so the consumers do not also run one |
+
+`spec.indexMaintenance.schedule` and `IndexMaintenance__Periodic` are two halves of one rule:
+**exactly one thing may rebuild the indexes on a schedule.** Both at once is a duplicate full scan
+every tick; neither is an index that quietly stops being reconciled while search keeps answering
+from it. The flag is read once at startup, which is why it is written to the ConfigMap whether it
+is true or false — the config hash has to change so the pods actually roll.
+
+Consumer shard 0 still rebuilds **once at startup** regardless. A cron tick cannot cover the
+window between a deploy and its own first firing, and that window is exactly when the index is
+most likely to be missing.
 
 ## Prerequisites
 

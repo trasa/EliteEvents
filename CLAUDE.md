@@ -96,11 +96,20 @@ Two constraints drive the design and are easy to break by accident:
 - **Every member must be at score 0.** `ZRANGEBYLEX` is only defined when scores are equal. This
   is why the index can't also carry a last-seen timestamp and be pruned by score.
 - **The index therefore can't expire itself**, and a TTL on the key would drop the whole thing.
-  `SearchIndexMaintainer` (run hourly by `SearchIndexMaintenanceService` in Ingestion) reconciles
-  each index against the live keys instead, so the 30-day TTL on the data stays the single source
-  of truth. One rebuild covers stale entries, backfill, and recovering an index that
-  `allkeys-lru` evicted — it snapshots the index *before* scanning so a name the writer adds
-  mid-scan can't be mistaken for stale and removed.
+  `SearchIndexMaintainer` reconciles each index against the live keys instead, so the 30-day TTL
+  on the data stays the single source of truth. One rebuild covers stale entries, backfill, and
+  recovering an index that `allkeys-lru` evicted — it snapshots the index *before* scanning so a
+  name the writer adds mid-scan can't be mistaken for stale and removed.
+
+**A rebuild is not shardable, and that determines where it runs.** It reconciles the whole index
+against the whole keyspace, so N shards running it means N identical full passes for one identical
+result. In production the schedule belongs to a **CronJob the FeedListener controller owns**
+(`spec.indexMaintenance.schedule`, hourly by default), running the ingestion image with
+`--rebuild-indexes`. `SearchIndexMaintenanceService` in Ingestion then does exactly one thing:
+a **startup** rebuild, **on shard 0 only**. That startup pass is not redundant with the CronJob —
+it is the deploy-day and post-eviction recovery path, and a cron tick can't cover the window
+before its own first firing. Which mode a pod is in comes from `IndexMaintenance__Periodic` in the
+ConfigMap, written by the controller; exactly one of the two may own the schedule.
 
 Consequence worth knowing: the web tier now depends on a key only Ingestion maintains. On the
 deploy that introduces the index, search returns nothing and the count reads 0 until Ingestion's
@@ -127,11 +136,21 @@ Three things justify an operator over a Deployment, and each shapes the code:
   is still alive, so nothing garbage-collects them and they would keep writing.
 - **A finalizer drains Redis, in order.** `index:systems` / `index:carriers` have no TTL and are
   maintained only by a running listener, so deleting the resource would orphan them. The
-  finalizer deletes the consumer Deployments, waits for their pods to be gone, then runs a Job on
-  the **ingestion image** with `--purge-indexes` (`PurgeCommand` → `SearchIndexPurger`). Purging
-  while a consumer still ran would be undone by its next write. If the drain Job fails past its
+  finalizer deletes the maintenance CronJob **and** the consumer Deployments, waits for both pod
+  populations to be gone, then runs a Job on the **ingestion image** with `--purge-indexes`
+  (`PurgeCommand` → `SearchIndexPurger`). Purging while a consumer still ran would be undone by
+  its next write; purging while a *rebuild* ran would be undone wholesale, since a rebuild
+  rewrites the entire index. If the drain Job fails past its
   backoff limit the finalizer is released anyway, loudly — a finalizer that can't be satisfied
   wedges the namespace, which is worse than stale keys.
+- **Scheduled upkeep belongs to the feed, not to a CRD of its own.** `spec.indexMaintenance`
+  reconciles a CronJob running `--rebuild-indexes` on the same image, from the same ConfigMap.
+  It is a field rather than a second resource because these indexes are already this resource's:
+  written by its consumers, purged by its finalizer. A separate controller owning their upkeep
+  would put two reconcilers on one keyspace with nothing sequencing them. `schedule` is a
+  `*string` so an explicit `""` can turn it off — with a plain string, `omitempty` drops the empty
+  value and the API server re-applies the default, making the field impossible to clear.
+
 - **`status` separates running from receiving.** The controller polls each pod's `/health/stream`
   by pod IP (not through the Service — a ClusterIP would answer from an arbitrary shard) and sets
   `Available` (pods Ready) apart from `Streaming` (every shard got a message within
@@ -220,6 +239,12 @@ cd operator && make manifests generate   # after editing api/v1alpha1/feedlisten
 in well under a second. The operator has its own suite under `operator/` (`make test`): unit tests
 for the resource builders plus an envtest suite that runs the reconciler against a real API
 server.
+
+The operator suite pins two things about index maintenance that fail silently otherwise: that a
+schedule and the consumers' in-process timer are **mutually exclusive** (both = a duplicate full
+scan every tick; neither = an index nothing reconciles while search keeps answering from it), and
+that the consumer, maintenance and drain pod label sets are **mutually disjoint** — teardown waits
+on the first two and would deadlock waiting on itself if the drain pod matched either.
 
 `MessageShardFilter` is tested for the partition property, not the hash: every message must be
 owned by exactly one shard (a gap loses events, an overlap double-counts them), and every shard

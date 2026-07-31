@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
@@ -213,5 +214,115 @@ func TestNoAuthSecretMeansNoVolume(t *testing.T) {
 	}
 	if _, ok := buildConfigData(fl)["REDIS_AUTH_FILE"]; ok {
 		t.Error("REDIS_AUTH_FILE should be absent when no auth secret is configured")
+	}
+}
+
+// withMaintenance returns a feed with an index-rebuild schedule. Tests must set this explicitly:
+// the empty-object default that normally supplies it is applied by the API server, and objects
+// built in-process never go through defaulting.
+func withMaintenance(fl *elitev1alpha1.FeedListener, schedule string) *elitev1alpha1.FeedListener {
+	fl.Spec.IndexMaintenance = &elitev1alpha1.IndexMaintenanceSpec{
+		Schedule:              &schedule,
+		ActiveDeadlineSeconds: 900,
+	}
+	return fl
+}
+
+// The rebuild Job must run the ingestion image, because that image is where RedisKeys lives. If
+// this ever became a generic image running redis-cli, the keyspace would have a second
+// definition — the failure the drain Job is deliberately shaped to avoid.
+func TestMaintenanceCronJobRunsTheIngestionImage(t *testing.T) {
+	fl := withMaintenance(testFeedListener(2), "17 * * * *")
+	cj := BuildMaintenanceCronJob(fl)
+
+	if cj.Spec.Schedule != "17 * * * *" {
+		t.Errorf("schedule = %q", cj.Spec.Schedule)
+	}
+	container := cj.Spec.JobTemplate.Spec.Template.Spec.Containers[0]
+	if container.Image != fl.Spec.Image {
+		t.Errorf("image = %q, want the consumer image %q", container.Image, fl.Spec.Image)
+	}
+	if len(container.Args) != 1 || container.Args[0] != "--rebuild-indexes" {
+		t.Errorf("args = %v, want [--rebuild-indexes]", container.Args)
+	}
+
+	// Same ConfigMap as the consumers: one copy of the Redis connection details, so the rebuild
+	// cannot end up reconciling an index in a different Redis than the one being written.
+	if len(container.EnvFrom) != 1 || container.EnvFrom[0].ConfigMapRef.Name != configMapName(fl) {
+		t.Errorf("envFrom = %+v, want the shared config map", container.EnvFrom)
+	}
+	if mounts := container.VolumeMounts; len(mounts) != 1 || mounts[0].MountPath != redisAuthMountPath {
+		t.Errorf("expected the redis-auth mount, got %+v", mounts)
+	}
+}
+
+// Overlapping rebuilds are not incorrect, just wasteful in exactly the way this whole change
+// exists to stop: two full passes over the same keyspace converging on the same answer.
+func TestMaintenanceCronJobForbidsConcurrentRebuilds(t *testing.T) {
+	fl := withMaintenance(testFeedListener(1), "17 * * * *")
+	cj := BuildMaintenanceCronJob(fl)
+
+	if cj.Spec.ConcurrencyPolicy != batchv1.ForbidConcurrent {
+		t.Errorf("concurrencyPolicy = %q, want Forbid", cj.Spec.ConcurrencyPolicy)
+	}
+	if cj.Spec.JobTemplate.Spec.ActiveDeadlineSeconds == nil {
+		t.Error("expected an activeDeadlineSeconds bound on a rebuild")
+	}
+}
+
+// The three pod populations must stay mutually invisible. stopWriters waits for the consumer and
+// maintenance selectors to come back empty before it starts the drain; if the drain pod matched
+// either, the finalizer would wait on itself and wedge the resource in Terminating forever.
+func TestWriterAndDrainSelectorsAreDisjoint(t *testing.T) {
+	fl := withMaintenance(testFeedListener(2), "17 * * * *")
+
+	consumers := labels.SelectorFromSet(selectorLabels(fl))
+	maintenance := labels.SelectorFromSet(maintenanceLabels(fl))
+
+	drainPod := labels.Set(BuildDrainJob(fl).Spec.Template.Labels)
+	if consumers.Matches(drainPod) {
+		t.Error("drain pod matches the consumer selector; the finalizer would wait on itself")
+	}
+	if maintenance.Matches(drainPod) {
+		t.Error("drain pod matches the maintenance selector; the finalizer would wait on itself")
+	}
+
+	rebuildPod := labels.Set(BuildMaintenanceCronJob(fl).Spec.JobTemplate.Spec.Template.Labels)
+	if consumers.Matches(rebuildPod) {
+		t.Error("rebuild pod matches the consumer selector; it would join the Service and be " +
+			"counted as a ready consumer despite serving no HTTP")
+	}
+	if !maintenance.Matches(rebuildPod) {
+		t.Error("rebuild pod does not match the maintenance selector; teardown would not wait for it")
+	}
+}
+
+// The handoff contract. Exactly one thing may rebuild on a schedule: the CronJob when there is
+// one, the consumers' own timer when there is not. Both at once is a duplicated full scan on
+// every tick; neither is an index that silently stops being reconciled.
+func TestScheduleAndInProcessTimerAreMutuallyExclusive(t *testing.T) {
+	scheduled := withMaintenance(testFeedListener(2), "17 * * * *")
+	if got := buildConfigData(scheduled)["IndexMaintenance__Periodic"]; got != "false" {
+		t.Errorf("with a schedule, IndexMaintenance__Periodic = %q, want %q", got, "false")
+	}
+
+	unscheduled := withMaintenance(testFeedListener(2), "")
+	if got := buildConfigData(unscheduled)["IndexMaintenance__Periodic"]; got != "true" {
+		t.Errorf("without a schedule, IndexMaintenance__Periodic = %q, want %q", got, "true")
+	}
+
+	// An absent spec is the in-process shape too, so a FeedListener built without defaulting
+	// never silently loses index upkeep altogether.
+	nilSpec := testFeedListener(2)
+	nilSpec.Spec.IndexMaintenance = nil
+	if got := buildConfigData(nilSpec)["IndexMaintenance__Periodic"]; got != "true" {
+		t.Errorf("with no maintenance spec, IndexMaintenance__Periodic = %q, want %q", got, "true")
+	}
+
+	// Adding or removing a schedule must roll the consumers: the flag only takes effect at
+	// startup, so a pod that keeps running keeps its old timer.
+	if hashConfigData(buildConfigData(scheduled)) == hashConfigData(buildConfigData(unscheduled)) {
+		t.Error("config hash is identical with and without a schedule; the pods would not roll " +
+			"and would keep the timer they started with")
 	}
 }

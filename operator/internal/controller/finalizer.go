@@ -49,11 +49,11 @@ func drainLabels(fl *elitev1alpha1.FeedListener) map[string]string {
 // that writes them, so deleting the listener without draining leaves keys that nothing will
 // ever reclaim.
 //
-// Purging cannot simply run alongside the consumers, either. Every docking write adds index
-// members and the hourly maintainer rebuilds them wholesale, so a purge racing a live consumer
-// would be undone within the second. The consumers must be gone first, and only the controller
-// can sequence that — owner-reference garbage collection is unordered and would delete the
-// Deployments and the resource concurrently.
+// Purging cannot simply run alongside the writers, either. Every docking write adds index members
+// and the maintenance CronJob rebuilds both indexes wholesale, so a purge racing either one would
+// be undone — within the second by a consumer, entirely by a rebuild. Both must be gone first,
+// and only the controller can sequence that: owner-reference garbage collection is unordered and
+// would delete the children and the resource concurrently.
 func (r *FeedListenerReconciler) finalize(ctx context.Context, fl *elitev1alpha1.FeedListener) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -75,14 +75,14 @@ func (r *FeedListenerReconciler) finalize(ctx context.Context, fl *elitev1alpha1
 		return r.releaseFinalizer(ctx, fl)
 	}
 
-	// Step 1 — stop the writers. Deleting the Deployments rather than scaling them to zero
+	// Step 1 — stop everything that writes the indexes. Deleting rather than scaling to zero
 	// keeps this idempotent and leaves nothing behind if the purge later fails.
-	stopped, err := r.stopConsumers(ctx, fl)
+	stopped, err := r.stopWriters(ctx, fl)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if !stopped {
-		log.V(1).Info("waiting for consumers to terminate before draining")
+		log.V(1).Info("waiting for writers to terminate before draining")
 		return ctrl.Result{RequeueAfter: drainPollInterval}, nil
 	}
 
@@ -116,8 +116,24 @@ func (r *FeedListenerReconciler) finalize(ctx context.Context, fl *elitev1alpha1
 	}
 }
 
-// stopConsumers deletes every shard Deployment and reports whether all consumer pods are gone.
-func (r *FeedListenerReconciler) stopConsumers(ctx context.Context, fl *elitev1alpha1.FeedListener) (bool, error) {
+// stopWriters removes everything that can put members back into the indexes and reports whether
+// all of it is actually gone.
+//
+// That is two populations, not one. The consumers write index members on every docking, and the
+// maintenance CronJob rebuilds both indexes wholesale — either one running during the purge would
+// undo it, and a rebuild would undo it completely rather than partially. Owner-reference garbage
+// collection cannot be relied on to remove the CronJob first: it is unordered, and it would be
+// racing the drain Job this same finalizer is about to start.
+func (r *FeedListenerReconciler) stopWriters(ctx context.Context, fl *elitev1alpha1.FeedListener) (bool, error) {
+	// Delete the CronJob before the Deployments. It is the cheaper of the two to stop and the
+	// only one that could otherwise start a *new* writer while we wait for the others to exit.
+	cronJob := &batchv1.CronJob{}
+	cronJob.Name = maintenanceCronJobName(fl)
+	cronJob.Namespace = fl.Namespace
+	if err := r.Delete(ctx, cronJob); err != nil && !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("stopping maintenance cronjob: %w", err)
+	}
+
 	var deployments appsv1.DeploymentList
 	if err := r.List(ctx, &deployments,
 		client.InNamespace(fl.Namespace),
@@ -136,16 +152,44 @@ func (r *FeedListenerReconciler) stopConsumers(ctx context.Context, fl *elitev1a
 		}
 	}
 
-	// Deployment deletion returns before its pods are gone, and a pod still in Terminating is
-	// still holding a socket and still writing.
-	var pods corev1.PodList
-	if err := r.List(ctx, &pods,
+	// Deleting a CronJob does not stop a rebuild already in flight, so any Job it spawned is
+	// deleted explicitly. Foreground propagation is what makes the pod wait below meaningful:
+	// the default orphans the pods, which would leave a rebuild running against the Redis we are
+	// about to purge while its Job disappears from under it.
+	var jobs batchv1.JobList
+	if err := r.List(ctx, &jobs,
 		client.InNamespace(fl.Namespace),
-		client.MatchingLabels(selectorLabels(fl)),
+		client.MatchingLabels(maintenanceLabels(fl)),
 	); err != nil {
-		return false, fmt.Errorf("listing consumer pods during drain: %w", err)
+		return false, fmt.Errorf("listing maintenance jobs during drain: %w", err)
 	}
-	return len(pods.Items) == 0, nil
+	for i := range jobs.Items {
+		job := &jobs.Items[i]
+		if job.DeletionTimestamp != nil {
+			continue
+		}
+		if err := r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil &&
+			!apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("stopping maintenance job %s: %w", job.Name, err)
+		}
+	}
+
+	// Deletion returns before pods are gone, and a pod still in Terminating is still holding a
+	// socket and still writing. Both label sets are checked; they are deliberately disjoint, and
+	// neither matches the drain pod that runs next — waiting on that one would hang forever.
+	for _, labels := range []map[string]string{selectorLabels(fl), maintenanceLabels(fl)} {
+		var pods corev1.PodList
+		if err := r.List(ctx, &pods,
+			client.InNamespace(fl.Namespace),
+			client.MatchingLabels(labels),
+		); err != nil {
+			return false, fmt.Errorf("listing writer pods during drain: %w", err)
+		}
+		if len(pods.Items) > 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // ensureDrainJob creates the purge Job if it does not exist and returns its current state.
@@ -193,46 +237,9 @@ func jobFailed(job *batchv1.Job) bool {
 	return false
 }
 
-// BuildDrainJob renders the purge Job. It reuses the consumer image and its ConfigMap so the
-// purge connects to exactly the Redis the consumers were writing, with no second copy of the
-// connection details.
+// BuildDrainJob renders the purge Job — the ingestion image run as a command, exactly like the
+// scheduled rebuild; see oneShotPodSpec for why both reuse the consumer image and ConfigMap.
 func BuildDrainJob(fl *elitev1alpha1.FeedListener) *batchv1.Job {
-	container := corev1.Container{
-		Name:  "drain",
-		Image: fl.Spec.Image,
-		Args:  []string{"--purge-indexes"},
-		EnvFrom: []corev1.EnvFromSource{{
-			ConfigMapRef: &corev1.ConfigMapEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: configMapName(fl)},
-			},
-		}},
-		SecurityContext: &corev1.SecurityContext{
-			AllowPrivilegeEscalation: ptr(false),
-			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-		},
-	}
-
-	podSpec := corev1.PodSpec{
-		RestartPolicy:    corev1.RestartPolicyNever,
-		ImagePullSecrets: fl.Spec.ImagePullSecrets,
-		SecurityContext:  &corev1.PodSecurityContext{RunAsNonRoot: ptr(true)},
-		Containers:       []corev1.Container{container},
-	}
-
-	if fl.Spec.Redis.AuthSecret != nil {
-		podSpec.Volumes = []corev1.Volume{{
-			Name: redisAuthVolume,
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{SecretName: fl.Spec.Redis.AuthSecret.Name},
-			},
-		}}
-		podSpec.Containers[0].VolumeMounts = []corev1.VolumeMount{{
-			Name:      redisAuthVolume,
-			MountPath: redisAuthMountPath,
-			ReadOnly:  true,
-		}}
-	}
-
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      drainJobName(fl),
@@ -243,7 +250,7 @@ func BuildDrainJob(fl *elitev1alpha1.FeedListener) *batchv1.Job {
 			BackoffLimit: ptr(int32(drainJobBackoffLimit)),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: drainLabels(fl)},
-				Spec:       podSpec,
+				Spec:       oneShotPodSpec(fl, "drain", "--purge-indexes"),
 			},
 		},
 	}

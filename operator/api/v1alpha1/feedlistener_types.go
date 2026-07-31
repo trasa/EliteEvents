@@ -63,6 +63,45 @@ type RedisConfig struct {
 	AuthSecret *RedisAuthSecret `json:"authSecret,omitempty"`
 }
 
+// IndexMaintenanceSpec schedules the periodic rebuild of this feed's Redis search indexes.
+//
+// The rebuild belongs to the feed rather than to a resource of its own: index:systems and
+// index:carriers are written by these consumers, reconciled against the keys these consumers
+// produce, and purged by this resource's finalizer. Splitting upkeep into a second CRD would put
+// two controllers in charge of one keyspace with nothing sequencing them.
+//
+// Unlike the 30-day data, these indexes cannot expire themselves — ZRANGEBYLEX requires every
+// member at score 0, so they cannot be scored by age, and a TTL would drop the whole key. A
+// periodic rebuild against the live data is what keeps them honest.
+type IndexMaintenanceSpec struct {
+	// schedule is a cron expression for the rebuild Job, interpreted in the cluster's timezone.
+	//
+	// An empty schedule creates no CronJob and hands the work back to a timer inside consumer
+	// shard 0. That is the local-development shape and the fallback; it is not the default,
+	// because in-process upkeep ties a full keyspace pass to the lifetime of a pod whose actual
+	// job is to never block on anything.
+	//
+	// The schedule is validated by the API server when the CronJob is created — a malformed
+	// expression surfaces as a Degraded condition and a MaintenanceError event, not as a silently
+	// skipped rebuild.
+	//
+	// It is a pointer so that "unset" and "explicitly empty" stay distinguishable. With a plain
+	// string, omitempty drops "" from the serialized object, the API server sees an absent field
+	// and re-applies the default — making the schedule impossible to turn off.
+	// +optional
+	// +kubebuilder:default="17 * * * *"
+	// +kubebuilder:validation:MaxLength=200
+	Schedule *string `json:"schedule,omitempty"`
+
+	// activeDeadlineSeconds bounds a single rebuild. A pass that has run this long is not going
+	// to finish usefully before the next tick, and leaving it running would have two full scans
+	// of the same keyspace overlap.
+	// +optional
+	// +kubebuilder:default=900
+	// +kubebuilder:validation:Minimum=60
+	ActiveDeadlineSeconds int64 `json:"activeDeadlineSeconds,omitempty"`
+}
+
 // FeedListenerSpec describes a subscription to an EDDN relay and the consumers that service it.
 type FeedListenerSpec struct {
 	// relayEndpoint is the ZeroMQ endpoint to subscribe to.
@@ -109,6 +148,15 @@ type FeedListenerSpec struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitzero"`
 
+	// indexMaintenance schedules rebuilds of this feed's Redis search indexes.
+	//
+	// The empty-object default is what makes the CronJob the normal path: the API server fills
+	// this in when it is omitted, and the nested schedule default then applies. A nil pointer
+	// only occurs for objects built in-process without defaulting, and means no CronJob.
+	// +optional
+	// +kubebuilder:default={}
+	IndexMaintenance *IndexMaintenanceSpec `json:"indexMaintenance,omitempty"`
+
 	// retainIndexesOnDelete skips the drain Job that would otherwise purge this feed's
 	// Redis search indexes when the resource is deleted. Set it when another listener writes
 	// the same keyspace, or when the data should outlive the resource that produced it.
@@ -139,6 +187,12 @@ type FeedListenerStatus struct {
 	// the signal that distinguishes a healthy listener from one that is merely running.
 	// +optional
 	LastMessageTime *metav1.Time `json:"lastMessageTime,omitempty"`
+
+	// lastIndexRebuildTime is when the maintenance CronJob last completed successfully. Empty
+	// while a schedule exists but has not yet fired, and while upkeep runs in-process — the
+	// controller reports only what it can observe from the Job it owns.
+	// +optional
+	LastIndexRebuildTime *metav1.Time `json:"lastIndexRebuildTime,omitempty"`
 
 	// conditions represent the current state of the FeedListener.
 	// +listType=map
