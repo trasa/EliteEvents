@@ -1,18 +1,18 @@
 # Roadmap — merge Visitors + Dashboard into one ASP.NET/htmx app
 
-Status: **Complete.** `elite.meancat.com` serves from Kubernetes; the droplet and the managed
-Valkey were destroyed on 2026-07-30, so there is no longer a rollback path to the old stack. All
-three optional Phase 6 items are done as well.
+Status: **Complete and closed.** `elite.meancat.com` serves from Kubernetes; the droplet and the
+managed Valkey were destroyed on 2026-07-30, so there is no longer a rollback path to the old
+stack. All three optional Phase 6 items are done.
 
-**Phase 7** (also 2026-07-30) is a later addition, not part of the original migration: ingestion
-moved from a hand-written Deployment to a `FeedListener` custom resource managed by an operator in
-`operator/`. The two-container topology below is unchanged — it is how ingestion is *scheduled*
-that differs.
+**Phases 7 and 8** (also 2026-07-30) are later additions, not part of the original migration.
+Phase 7 moved ingestion from a hand-written Deployment to a `FeedListener` custom resource managed
+by the operator in `operator/`; Phase 8 moved search-index upkeep off an in-process timer onto a
+CronJob that resource owns. The two-container topology below is unchanged throughout — what
+differs is how ingestion is *scheduled*.
 
-> **Do not deploy the droplet stack from this branch.** `EliteEvents.Visitors` no longer ingests —
-> `Dockerfile` / `build-image` / `docker-compose.yaml` still build and run only that project, so
-> pushing the image from here would leave production with a web tier and no writer. Containers are
-> rebuilt for k8s in Phase 4; nothing in this branch is deployable until then.
+Nothing in this document is outstanding. The live architecture is described in `CLAUDE.md`,
+the cluster runbook in `k8s/README.md`, and the operator's design in `operator/README.md`; this
+file is kept for the reasoning behind the decisions, not as a work list.
 
 Local ports: web `5240`, ingestion `5239`, the retired Visitors app `5238`.
 
@@ -729,21 +729,15 @@ Worth remembering:
 - The pod-label deadlock from Phase 7 grew a third population to keep disjoint (consumer,
   maintenance, drain). Pinned by a test, as before.
 
----
+### Closed out with Phase 8
 
-## CLAUDE.md corrections to fold into Phase 5
+`System.Security.Cryptography.Xml` 10.0.6 — five High-severity advisories, pulled in transitively
+by `NetMQ` (directly, and again through `System.ServiceModel.Primitives`) and therefore shipped
+inside both container images. Nothing here parses XML, so the vulnerable signature-handling paths
+are unreachable, but the package is present in the image and any registry scan flags it.
 
-Verified against the working tree on 2026-07-28:
-
-| Documented | Actual |
-|---|---|
-| compose runs `visitors` + `caddy` | also runs `dashboard` (`trasa/elite-dashboard:latest`), built by hand via `build-image` — no CI job covers it |
-| *(absent)* | `/health` endpoint plus `RedisHealthCheck` and `EddnStreamHealthCheck`. The commit message says `/api/health`; `Program.cs:84` maps `/health` |
-| *(absent)* | `EventTickerService` publishes JSON to the Redis channel `eddn:events` — this is the contract the Next ticker consumes |
-| *(absent)* | `EddnStreamReceiver` silence detection + reconnect, driven by `EddnOptions.ReconnectAfterSilence` |
-| *(absent)* | `StreamHealthTracker` shares last-message time between the receiver and the health check |
-| `EliteEvents.Journalweb` | directory is `EliteEvents.JournalWeb`, and it **does** reference `EliteEvents.Eddn` |
-
-`EliteEvents.Dashboard/.claude/NOTES.md` is also stale — it still calls the Next app
-"EliteEvents.Web" and lists the pub/sub publish as an unfinished TODO, though it shipped in
-commit `5f5f73b`. That file goes away with the directory.
+Fixed by referencing the package directly at 10.0.10 in `EliteEvents.Eddn.csproj`, purely to float
+the transitive resolution above the affected range — no code change, no `NetMQ` upgrade. The
+reference should be removed once `NetMQ` resolves 10.0.7 or later on its own; the comment in the
+csproj says so, because an unexplained direct reference to a package the project never calls is
+exactly the kind of thing a future reader deletes as dead weight.

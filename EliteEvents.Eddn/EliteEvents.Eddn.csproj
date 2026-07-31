@@ -23,6 +23,16 @@
         <PackageReference Include="NetMQ" Version="4.0.4.2" />
         <PackageReference Include="Newtonsoft.Json" Version="$(NewtonsoftJsonVersion)" />
         <PackageReference Include="StackExchange.Redis" Version="2.10.1" />
+
+        <!-- Not used by this project. It is a transitive dependency of NetMQ (directly, and again
+             through System.ServiceModel.Primitives), and the version NetMQ resolves — 10.0.6 —
+             carries five High-severity advisories in XML signature handling. Nothing here parses
+             XML, so the vulnerable paths are unreachable, but the package still ships inside both
+             container images and any registry scanner will flag it.
+
+             Referenced directly only to float the transitive resolution above the affected range.
+             Remove it once NetMQ ships a release that resolves 10.0.7 or later on its own. -->
+        <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
     </ItemGroup>
     
     <!-- Generated clients are gitignored, so they exist locally only after a Debug build. A clean
