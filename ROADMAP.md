@@ -656,6 +656,81 @@ Worth remembering:
 
 ---
 
+## Phase 8 — scheduled index maintenance on the FeedListener
+
+Shipped 2026-07-30 as `1.0.0-alpha.g6f39e3fa16`.
+
+### The proposal that didn't survive contact
+
+The next controller was going to be a `RetentionPolicy` CRD: model the 30-day window and a
+keyspace pattern as a resource, own a `CronJob` that runs the purge. It died on inspection —
+**there is no purge.** Retention is a Redis TTL set inside the same batch as each write
+(`DockingWriter` calls `KeyExpireAsync(key, RedisKeys.DataExpiration)` on every touch), and
+Redis's expiry cycle reclaims. The CronJob would have had nothing to run.
+
+Two further objections, worth keeping because they generalise:
+
+- `keyspace pattern` in a CRD spec puts Redis key formats in Go — the second copy of the keyspace
+  that the drain Job exists specifically to avoid, and a second copy of the retention rule as well.
+- "keys reclaimed" is not observable; Redis does not report it. Producing that number means
+  `SCAN`-ing the keyspace, which is the exact O(keyspace) operation Phase 6 removed. A status
+  field can be the thing that forces a bad design.
+
+The test that came out of it: generating a `CronJob` from a CRD is templating, and templating is
+kustomize's job. An operator needs something to **prune**, something to **order**, or state to
+**re-derive** that the API server won't report. `FeedListener` has all three; `RetentionPolicy`
+had none.
+
+### What was actually wrong
+
+The scheduled work hiding in app logic was not retention but `SearchIndexMaintenanceService` — an
+hourly `PeriodicTimer` in the ingestion host, registered unconditionally. **Since Phase 7 that
+means every shard runs its own full rebuild.** A rebuild reconciles the whole index against the
+whole keyspace; it is not partitioned the way the feed is, so `consumers: N` produced N identical
+full passes for one identical result.
+
+This is the FNV-1a bug's shape again: nothing incorrect (the rebuild is idempotent), latent
+(production runs `consumers: 1`, so it costs nothing until someone scales), and caused by code
+outliving the shape it was written for — the service predates sharding by exactly one phase. No
+test caught it because there is no wrong answer to assert against, only a redundant one.
+
+### Decisions made
+
+- **A field on `FeedListener`, not a second CRD.** These indexes already belong to that resource:
+  written by its consumers, purged by its finalizer. A separate controller owning their upkeep
+  would put two reconcilers on one keyspace with nothing sequencing them. "Does this need its own
+  CRD?" is an *ownership* question, distinct from "does this need an operator?".
+- **Exactly one scheduler.** `spec.indexMaintenance.schedule` reconciles a CronJob running the
+  ingestion image with `--rebuild-indexes`; the controller writes `IndexMaintenance__Periodic`
+  into the shared ConfigMap so the consumers' timer switches off. Both at once is a duplicate full
+  scan every tick; neither is an index nothing reconciles while search keeps answering from it.
+  Written to the ConfigMap in both states, so the config hash changes and the pods actually roll.
+- **Shard 0 still rebuilds once at startup.** Not the schedule — the deploy-day and post-eviction
+  recovery path. A cron tick cannot cover the window before its own first firing, which is exactly
+  when the index is most likely to be missing.
+- **The finalizer stops the CronJob first.** Strictly worse than the consumer race Phase 7 handled:
+  a consumer racing the purge dirties it with its next write, a *rebuild* racing it restores the
+  entire index while the purge reports success. Teardown is now stop CronJob and Deployments →
+  wait for **both** pod populations → drain.
+
+Worth remembering:
+
+- **`omitempty` plus `kubebuilder:default` makes a field impossible to clear.** `schedule: ""`
+  serializes to nothing, the API server sees an absent field and re-applies the default. It had to
+  become a `*string` to keep "unset" and "explicitly empty" distinguishable. Each annotation is
+  fine alone; the bug is entirely in their interaction, and the symptom is a field that silently
+  ignores you.
+- **`./deploy-k8s` rotted a second time, in a new way.** It still waited on
+  `deployment/ingestion` — a name that stopped existing in Phase 7 when ingestion became one
+  Deployment per shard. The apply succeeded and then the script failed on a rollout wait for a
+  workload that had been gone for a phase. Shards are named by the controller, so they are now
+  discovered by label. Tooling that names workloads statically rots every time an operator starts
+  naming them for you.
+- The pod-label deadlock from Phase 7 grew a third population to keep disjoint (consumer,
+  maintenance, drain). Pinned by a test, as before.
+
+---
+
 ## CLAUDE.md corrections to fold into Phase 5
 
 Verified against the working tree on 2026-07-28:
