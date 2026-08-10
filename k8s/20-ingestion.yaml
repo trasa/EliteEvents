@@ -45,12 +45,19 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 30
             failureThreshold: 5
+            timeoutSeconds: 3
+          # timeoutSeconds is set explicitly: the default is 1s, and a readiness check that
+          # reaches Redis over a shared multiplexer can blow that budget whenever the
+          # single-threaded server is busy with someone else's slow command. Kept in step with
+          # the FeedListener controller's probeTimeoutSeconds, since this file is the rollback
+          # target for exactly that Deployment.
           readinessProbe:
             httpGet:
               path: /health/ready
               port: http
             initialDelaySeconds: 10
             periodSeconds: 15
+            timeoutSeconds: 3
           resources:
             requests:
               cpu: 100m

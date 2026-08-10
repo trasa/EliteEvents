@@ -22,6 +22,17 @@ data:
     # OOM-killed. Raise this together with the container memory limit if the working set grows.
     maxmemory 256mb
     maxmemory-policy allkeys-lru
+
+    # Cap what a single client reply may buffer. Redis counts output buffers against maxmemory,
+    # so with the default of "normal 0 0 0" — unlimited — one query returning a large collection
+    # is enough to push the instance past maxmemory and start evicting real data. That is exactly
+    # what happened: a full-range fetch of systems:visits (~20 MB per reply, polled every 15s per
+    # open browser tab) drove used_memory_peak to 704 MB and produced 31k allkeys-lru evictions.
+    #
+    # The query itself is fixed; this is the backstop, so the next unbounded read degrades into
+    # one disconnected client instead of a keyspace-wide eviction storm. The soft limit tolerates
+    # a briefly slow reader; the hard limit is what a runaway reply hits.
+    client-output-buffer-limit normal 64mb 32mb 60
 ---
 # Governing service for the StatefulSet.
 apiVersion: v1
@@ -105,17 +116,23 @@ spec:
                 secretKeyRef:
                   name: redis-auth
                   key: password
+          # These are exec probes, so each one pays a shell plus a redis-cli startup and connect
+          # before it even sends PING — and PING itself queues behind whatever the single-threaded
+          # server is already doing. The 1s default left no margin for that: Redis stalling on one
+          # slow command from an application pod could take Redis itself out of its own Service.
           readinessProbe:
             exec:
               command: ["sh", "-c", "redis-cli ping"]
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 3
           livenessProbe:
             exec:
               command: ["sh", "-c", "redis-cli ping"]
             initialDelaySeconds: 15
             periodSeconds: 20
             failureThreshold: 5
+            timeoutSeconds: 3
           resources:
             requests:
               cpu: 50m

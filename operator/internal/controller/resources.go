@@ -37,6 +37,13 @@ const (
 	// shardLabel records which shard of the partition a Deployment owns.
 	shardLabel = "elite.meancat.com/shard"
 
+	// probeTimeoutSeconds is set explicitly because the Kubernetes default is 1s, which is far
+	// too tight for a readiness check that talks to Redis over a shared multiplexer. Consumers
+	// were going NotReady on "context deadline exceeded" whenever a single slow command stalled
+	// the server. This is deliberately still well under PeriodSeconds so a probe cannot overlap
+	// its own next firing.
+	probeTimeoutSeconds = 3
+
 	nameLabel      = "app.kubernetes.io/name"
 	instanceLabel  = "app.kubernetes.io/instance"
 	partOfLabel    = "app.kubernetes.io/part-of"
@@ -254,7 +261,14 @@ func BuildShardDeployment(fl *elitev1alpha1.FeedListener, shard int32, configHas
 			InitialDelaySeconds: 10,
 			PeriodSeconds:       30,
 			FailureThreshold:    5,
+			TimeoutSeconds:      probeTimeoutSeconds,
 		},
+		// Readiness reaches Redis, so its timeout has to allow for a server that is briefly busy.
+		// Both timeouts were left unset, which meant the Kubernetes default of 1s: a single slow
+		// command on a single-threaded Redis was enough to blow the whole budget and take the
+		// only writer out of service. The consumer also runs on a 1-vCPU node with a blocking
+		// receive loop holding a thread-pool worker, so a 1s deadline left no room for the pool
+		// to inject a thread for Kestrel to answer on.
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
@@ -264,6 +278,7 @@ func BuildShardDeployment(fl *elitev1alpha1.FeedListener, shard int32, configHas
 			},
 			InitialDelaySeconds: 10,
 			PeriodSeconds:       15,
+			TimeoutSeconds:      probeTimeoutSeconds,
 		},
 		Resources: resources,
 		SecurityContext: &corev1.SecurityContext{
