@@ -35,6 +35,13 @@ public class DockingReader : IDockingReader
     /// </summary>
     private const int SubstringScanCeiling = 5_000;
 
+    /// <summary>
+    /// Exclusive lower bound on a leaderboard entry's score. A system with a single recorded visit
+    /// is noise, so the leaderboard starts just above it. This is a presentation rule rather than
+    /// part of the key schema, which is why it lives here and not in <see cref="RedisKeys"/>.
+    /// </summary>
+    private const double LeaderboardScoreFloor = 1.0;
+
     private readonly IDatabase _redisDatabase;
 
     public DockingReader(IConnectionMultiplexer connection)
@@ -97,21 +104,45 @@ public class DockingReader : IDockingReader
         return result;
     }
 
+    /// <summary>
+    /// The most-visited leaderboard, highest first.
+    /// <para>
+    /// Both the row limit and the "more than one visit" filter are applied <em>server-side</em>,
+    /// which is load-bearing rather than a micro-optimisation. This used to fetch the whole sorted
+    /// set by rank (<c>0..-1 WITHSCORES</c>) and trim it in LINQ, so rendering a 25-row panel
+    /// pulled every member across the wire. <c>systems:visits</c> gains a member per distinct
+    /// system jumped to and is only reset weekly, so that grew to ~231k members / ~20 MB by
+    /// mid-week — measured at ~600 ms per call against ~10 ms for a bounded one. Redis is
+    /// single-threaded, so each of those was a full server stall, and the home page polls this
+    /// every 15 seconds per open tab. The replies also buffered per-client without a cap, which is
+    /// what pushed the instance past <c>maxmemory</c> and into <c>allkeys-lru</c> eviction.
+    /// </para>
+    /// <para>
+    /// <c>ZREVRANGEBYSCORE key +inf (1 WITHSCORES LIMIT 0 topN</c> is O(log N + topN) and returns
+    /// exactly what the old client-side <c>Where</c>/<c>Take</c> pair produced: a single visit is
+    /// noise — usually one commander passing through — so the leaderboard only counts systems seen
+    /// more than once, and <see cref="Exclude.Start"/> is what makes that bound strict.
+    /// </para>
+    /// </summary>
     public async Task<IReadOnlyList<SystemVisitInfo>> GetSystemVisitsAsync(int topN = 100)
     {
-        var entries = await _redisDatabase.SortedSetRangeByRankWithScoresAsync(
+        if (topN <= 0)
+        {
+            return [];
+        }
+
+        var entries = await _redisDatabase.SortedSetRangeByScoreWithScoresAsync(
             RedisKeys.SystemVisits,
-            start: 0,
-            stop: -1,
-            order: Order.Descending
+            start: LeaderboardScoreFloor,
+            stop: double.PositiveInfinity,
+            exclude: Exclude.Start,
+            order: Order.Descending,
+            skip: 0,
+            take: topN
         );
 
-        // A single visit is noise — usually one commander passing through — so the leaderboard
-        // only counts systems seen more than once.
         return entries
-            .Where(entry => entry.Score > 1.0)
             .Select(entry => new SystemVisitInfo(entry.Element.ToString(), (long)entry.Score))
-            .Take(topN)
             .ToList();
     }
 
