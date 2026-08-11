@@ -89,11 +89,19 @@ make build             # build the manager binary
 make docker-build IMG=registry.digitalocean.com/meancat/elite-operator:<tag>
 
 # Install just the CRD (safe; creates no workloads)
-make install
+make install KUBE_CONTEXT=do-sfo3-elite
 
 # Deploy the controller into elite-events-operator-system
-make deploy IMG=registry.digitalocean.com/meancat/elite-operator:<tag>
+make deploy IMG=registry.digitalocean.com/meancat/elite-operator:<tag> KUBE_CONTEXT=do-sfo3-elite
 ```
+
+`install`, `uninstall`, `deploy` and `undeploy` all require `KUBE_CONTEXT` and refuse to run
+without it. They used to target whatever `kubectl config current-context` said, which is not a
+stable input: starting Docker Desktop silently repoints it at the local `docker-desktop` cluster.
+On 2026-08-10 that sent a production operator deploy to a laptop — every resource reported
+`created`, which reads exactly like a successful first deploy. Unlike `../deploy-k8s` there is no
+safe default to fall back on here, because these targets serve both production and a throwaway
+kind cluster; naming the cluster is the only form that cannot be wrong by omission.
 
 `../build-image` and `../push-image` build and push `elite-operator` alongside the two .NET
 images, tagged from the same nbgv version — the controller and the ingestion image it schedules

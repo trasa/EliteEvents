@@ -7,10 +7,36 @@ VERSION="${1:-${VERSION:-$(cat .image-version 2>/dev/null || true)}}"
 NAMESPACE="${NAMESPACE:-elite}"
 KUSTOMIZATION="k8s/kustomization.yaml"
 
+# Which cluster this deploys to, named explicitly rather than inherited from whatever
+# `kubectl config current-context` happens to say. The ambient context is not a stable input:
+# starting Docker Desktop silently repoints it at the local `docker-desktop` cluster, which on
+# 2026-08-10 sent a `make deploy` to a laptop instead of production. It reported every resource
+# as "created" and looked like a successful deploy.
+#
+# Defaulting rather than requiring is safe *here* specifically because this script only does one
+# thing: it pins release tags, waits on rollouts, and prints the commit that records what is
+# running. There is no local-cluster use for it. Override for a different cluster; the name is
+# verified below either way, so a rename fails loudly instead of deploying somewhere unintended.
+KUBE_CONTEXT="${KUBE_CONTEXT:-do-sfo3-elite}"
+
 if [ -z "$VERSION" ]; then
     echo "Usage: ./deploy-k8s <image-tag>" >&2
     exit 1
 fi
+
+if ! kubectl config get-contexts -o name | grep -qxF "$KUBE_CONTEXT"; then
+    echo "Refusing to deploy: no kube context named '${KUBE_CONTEXT}'." >&2
+    echo "Available contexts:" >&2
+    kubectl config get-contexts -o name | sed 's/^/  /' >&2
+    echo "Set KUBE_CONTEXT=<name> to deploy elsewhere." >&2
+    exit 1
+fi
+
+# Every cluster-touching call below passes this explicitly. Note that it deliberately does *not*
+# run `kubectl config use-context`: mutating the developer's ambient context as a side effect of
+# a deploy is the same class of surprise this is guarding against.
+KUBECTL=(kubectl --context="$KUBE_CONTEXT")
+echo "Deploying ${VERSION} to context ${KUBE_CONTEXT}, namespace ${NAMESPACE}"
 
 # The tag goes into the kustomize images transformer, and `kubectl apply -k` is then the entire
 # deploy. It used to be applied as committed and re-pinned afterwards with `kubectl set image`,
@@ -50,14 +76,14 @@ if [ "$web_pinned" -lt 1 ] || [ "$ingestion_pinned" -lt 1 ]; then
     exit 1
 fi
 
-kubectl apply -k k8s/
+"${KUBECTL[@]}" apply -k k8s/
 
 # Ingestion first: each shard is a single writer with strategy Recreate, so it is briefly down and
 # the rollout should be seen through before the web tier starts.
 #
 # The shards are named by the FeedListener controller (eddn-0, eddn-1, ...), not by any manifest
 # here, so they are discovered by label rather than named. `rollout status` takes no selector.
-shards="$(kubectl -n "$NAMESPACE" get deploy \
+shards="$("${KUBECTL[@]}" -n "$NAMESPACE" get deploy \
     -l app.kubernetes.io/name=feed-listener \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')"
 if [ -z "$shards" ]; then
@@ -66,10 +92,10 @@ if [ -z "$shards" ]; then
     exit 1
 fi
 for shard in $shards; do
-    kubectl -n "$NAMESPACE" rollout status "deployment/${shard}" --timeout=5m
+    "${KUBECTL[@]}" -n "$NAMESPACE" rollout status "deployment/${shard}" --timeout=5m
 done
 
-kubectl -n "$NAMESPACE" rollout status deployment/web --timeout=5m
+"${KUBECTL[@]}" -n "$NAMESPACE" rollout status deployment/web --timeout=5m
 
 echo "Deployed ${VERSION}"
 

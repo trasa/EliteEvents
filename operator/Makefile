@@ -162,24 +162,65 @@ ifndef ignore-not-found
   ignore-not-found = false
 endif
 
+# KUBE_CONTEXT names the target cluster. It has no default and every target below refuses to run
+# without it.
+#
+# The scaffolded targets said "the K8s cluster specified in ~/.kube/config", i.e. whatever
+# `current-context` happened to be at the moment you typed make. That is not a stable input:
+# starting Docker Desktop repoints it at the local `docker-desktop` cluster with no prompt and no
+# output. On 2026-08-10 that sent a production operator deploy to a laptop — it reported every
+# resource as "created" and read as a clean success.
+#
+# Unlike ../deploy-k8s, this Makefile has no safe default to fall back on, because these four
+# targets legitimately serve both production and a throwaway kind cluster. A default would just
+# move the accident: either `make deploy` silently hits production from a dev shell, or it silently
+# hits a dev cluster when you meant production. Naming the cluster at the call site is the only
+# form that cannot be wrong by omission.
+#
+#   make deploy IMG=registry.digitalocean.com/meancat/elite-operator:<tag> KUBE_CONTEXT=do-sfo3-elite
+KUBE_CONTEXT ?=
+
+# Resolves to the kubectl invocation the deployment targets use. Nothing here calls
+# `kubectl config use-context`: changing the developer's ambient context as a side effect of a
+# deploy is the same surprise this guards against.
+KUBECTL_CTX = "$(KUBECTL)" --context="$(KUBE_CONTEXT)"
+
+.PHONY: require-context
+require-context:
+	@if [ -z "$(KUBE_CONTEXT)" ]; then \
+		echo "KUBE_CONTEXT is required — refusing to use the ambient kube context." >&2; \
+		echo "Current context is '$$( "$(KUBECTL)" config current-context 2>/dev/null || echo none )'," >&2; \
+		echo "but Docker Desktop and other tools change that without telling you." >&2; \
+		echo "Available contexts:" >&2; \
+		"$(KUBECTL)" config get-contexts -o name 2>/dev/null | sed 's/^/  /' >&2; \
+		echo "Re-run with KUBE_CONTEXT=<name>." >&2; \
+		exit 1; \
+	fi
+	@if ! "$(KUBECTL)" config get-contexts -o name 2>/dev/null | grep -qxF "$(KUBE_CONTEXT)"; then \
+		echo "No kube context named '$(KUBE_CONTEXT)'. Available:" >&2; \
+		"$(KUBECTL)" config get-contexts -o name 2>/dev/null | sed 's/^/  /' >&2; \
+		exit 1; \
+	fi
+	@echo "Targeting kube context: $(KUBE_CONTEXT)"
+
 .PHONY: install
-install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
+install: manifests kustomize require-context ## Install CRDs into the cluster named by KUBE_CONTEXT.
 	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
-	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" apply -f -; else echo "No CRDs to install; skipping."; fi
+	if [ -n "$$out" ]; then echo "$$out" | $(KUBECTL_CTX) apply -f -; else echo "No CRDs to install; skipping."; fi
 
 .PHONY: uninstall
-uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+uninstall: manifests kustomize require-context ## Uninstall CRDs from the cluster named by KUBE_CONTEXT. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
-	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -; else echo "No CRDs to delete; skipping."; fi
+	if [ -n "$$out" ]; then echo "$$out" | $(KUBECTL_CTX) delete --ignore-not-found=$(ignore-not-found) -f -; else echo "No CRDs to delete; skipping."; fi
 
 .PHONY: deploy
-deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
+deploy: manifests kustomize require-context ## Deploy controller to the cluster named by KUBE_CONTEXT.
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
+	"$(KUSTOMIZE)" build config/default | $(KUBECTL_CTX) apply -f -
 
 .PHONY: undeploy
-undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
+undeploy: kustomize require-context ## Undeploy controller from the cluster named by KUBE_CONTEXT. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+	"$(KUSTOMIZE)" build config/default | $(KUBECTL_CTX) delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Dependencies
 

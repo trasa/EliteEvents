@@ -145,6 +145,23 @@ doctl projects resources assign "$PROJECT" --resource="do:volume:$VOL_ID"
 `deploy-k8s` rewrites the `newTag` values in `kustomization.yaml` and then applies. **Commit that
 file after a deploy** — it is how the repo records the running version.
 
+### Which cluster it deploys to
+
+`deploy-k8s` targets `KUBE_CONTEXT`, defaulting to `do-sfo3-elite`, and verifies the context
+exists before it changes anything. It never reads `current-context` and never calls
+`use-context`.
+
+That is deliberate. The ambient context is not a stable input: starting Docker Desktop silently
+repoints it at the local `docker-desktop` cluster. On 2026-08-10 that sent an operator deploy to a
+laptop instead of production — it reported every resource as `created` and read as a clean first
+deploy. Defaulting is safe *here* because this script has exactly one job and no local-cluster
+use; `operator/`'s Makefile serves both production and kind, so it requires `KUBE_CONTEXT` with no
+default at all. Override for a different cluster:
+
+```bash
+KUBE_CONTEXT=some-other-cluster ./deploy-k8s "$(cat .image-version)"
+```
+
 ### Changing config, not code
 
 A bare `kubectl apply -k k8s/` is fine. Because the committed tags are the deployed tags, applying
@@ -233,7 +250,9 @@ kubectl -n elite get feed eddn          # PHASE should return to Streaming
 
 # The operator itself, if it changed. `make deploy` records the tag in
 # operator/config/manager/kustomization.yaml — commit that, it is the deployed version.
-cd operator && make deploy IMG=registry.digitalocean.com/meancat/elite-operator:<tag>
+# KUBE_CONTEXT is required there; that Makefile has no default.
+cd operator && make deploy IMG=registry.digitalocean.com/meancat/elite-operator:<tag> \
+    KUBE_CONTEXT=do-sfo3-elite
 ```
 
 Before pointing the FeedListener at a new ingestion image, check the image actually serves

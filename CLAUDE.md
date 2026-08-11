@@ -224,12 +224,15 @@ dotnet test EliteEvents.Eddn.Tests
 # Operator (Go, separate module — see operator/README.md)
 cd operator && make test      # unit tests + envtest; Makefile pins GOTOOLCHAIN=go1.26.5
 cd operator && make manifests generate   # after editing api/v1alpha1/feedlistener_types.go
+# Deploying the operator requires naming the cluster; there is no default:
+cd operator && make deploy IMG=<image> KUBE_CONTEXT=do-sfo3-elite
 
 # Images and deployment (see k8s/README.md)
 ./build-image      # all three images, linux/amd64, tagged from nbgv
 ./push-image       # to registry.digitalocean.com/meancat
 ./deploy-k8s <tag> # write the tag into kustomization.yaml, apply, wait for both rollouts
                    # commit kustomization.yaml afterwards — it records the deployed version
+                   # targets KUBE_CONTEXT (default do-sfo3-elite), never the ambient context
 ```
 
 ### Tests

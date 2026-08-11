@@ -25,10 +25,18 @@ jobs:
       - name: Fetch kubeconfig
         run: doctl kubernetes cluster kubeconfig save ${{ vars.DOKS_CLUSTER_NAME }} --expiry-seconds 900
 
+      # deploy-k8s refuses to use an ambient context, so name it explicitly. Reading it back from
+      # current-context is trustworthy *here* and nowhere else: the runner is fresh, so the
+      # kubeconfig doctl just wrote is the only one that exists. On a developer machine the same
+      # read is exactly what Docker Desktop hijacks. Deriving it also means this workflow does not
+      # hardcode the do-<region>-<cluster> name that DOKS_CLUSTER_NAME implies.
+      - name: Resolve kube context
+        run: echo "KUBE_CONTEXT=$(kubectl config current-context)" >> "$GITHUB_ENV"
+
       - name: Deploy
         env:
           VERSION: ${{ inputs.image_tag }}
         run: ./deploy-k8s "$VERSION"
 
       - name: Show what is running
-        run: kubectl -n elite get pods -o wide
+        run: kubectl --context="$KUBE_CONTEXT" -n elite get pods -o wide

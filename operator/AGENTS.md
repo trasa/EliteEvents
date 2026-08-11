@@ -156,16 +156,18 @@ Tests use **Ginkgo + Gomega** (BDD style). Check `suite_test.go` for setup.
 # 1. Regenerate manifests
 make manifests generate
 
-# 2. Build & deploy
+# 2. Build & deploy. KUBE_CONTEXT is required — the deployment targets refuse the ambient
+#    context, because Docker Desktop repoints it at the local cluster without saying so.
 export IMG=<registry>/<project>:tag
+export KUBE_CONTEXT=<kube-context>
 make docker-build docker-push IMG=$IMG  # Or: kind load docker-image $IMG --name <cluster>
-make deploy IMG=$IMG
+make deploy IMG=$IMG KUBE_CONTEXT=$KUBE_CONTEXT
 
 # 3. Test
-kubectl apply -k config/samples/
+kubectl --context=$KUBE_CONTEXT apply -k config/samples/
 
 # 4. Debug
-kubectl logs -n <project>-system deployment/<project>-controller-manager -c manager -f
+kubectl --context=$KUBE_CONTEXT logs -n <project>-system deployment/<project>-controller-manager -c manager -f
 ```
 
 ### API Design
