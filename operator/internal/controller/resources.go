@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +48,18 @@ const (
 	instanceLabel  = "app.kubernetes.io/instance"
 	partOfLabel    = "app.kubernetes.io/part-of"
 	componentLabel = "app.kubernetes.io/component"
+
+	// partOfValue ties every object this controller creates back to the wider stack. It matches
+	// the app.kubernetes.io/part-of value k8s/kustomization.yaml stamps on the hand-written
+	// manifests, so `-l app.kubernetes.io/part-of=elite-events` selects the whole system whether
+	// an object came from kustomize or from here.
+	partOfValue = "elite-events"
+
+	// shardIndexEnvVar is the only per-pod difference between shard Deployments, and it is a
+	// cross-language contract: the ingestion container binds it to Eddn:ShardIndex and hands it
+	// to MessageShardFilter. A typo here does not fail — it leaves every pod on the default
+	// shard 0, silently dropping the rest of the partition.
+	shardIndexEnvVar = "Eddn__ShardIndex"
 )
 
 // configMapName, serviceName and shardDeploymentName derive child names from the FeedListener.
@@ -80,7 +92,7 @@ func maintenanceLabels(fl *elitev1alpha1.FeedListener) map[string]string {
 	return map[string]string{
 		nameLabel:      "feed-maintenance",
 		instanceLabel:  fl.Name,
-		partOfLabel:    "elite-events",
+		partOfLabel:    partOfValue,
 		componentLabel: "maintenance",
 	}
 }
@@ -104,7 +116,7 @@ func shardSelectorLabels(fl *elitev1alpha1.FeedListener, shard int32) map[string
 
 func objectLabels(fl *elitev1alpha1.FeedListener) map[string]string {
 	labels := selectorLabels(fl)
-	labels[partOfLabel] = "elite-events"
+	labels[partOfLabel] = partOfValue
 	labels[componentLabel] = "ingestion"
 	return labels
 }
@@ -155,7 +167,7 @@ func hashConfigData(data map[string]string) string {
 	for k := range data {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 
 	h := sha256.New()
 	for _, k := range keys {
@@ -245,7 +257,7 @@ func BuildShardDeployment(fl *elitev1alpha1.FeedListener, shard int32, configHas
 			},
 		}},
 		Env: []corev1.EnvVar{{
-			Name:  "Eddn__ShardIndex",
+			Name:  shardIndexEnvVar,
 			Value: strconv.Itoa(int(shard)),
 		}},
 		// Liveness runs no checks at all: answering proves the process is up. A quiet relay or

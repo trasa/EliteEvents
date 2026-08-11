@@ -36,7 +36,7 @@ func drainLabels(fl *elitev1alpha1.FeedListener) map[string]string {
 	return map[string]string{
 		nameLabel:      "feed-drain",
 		instanceLabel:  fl.Name,
-		partOfLabel:    "elite-events",
+		partOfLabel:    partOfValue,
 		componentLabel: "drain",
 	}
 }
@@ -70,7 +70,7 @@ func (r *FeedListenerReconciler) finalize(ctx context.Context, fl *elitev1alpha1
 
 	if fl.Spec.RetainIndexesOnDelete {
 		log.Info("retainIndexesOnDelete is set; releasing without draining Redis")
-		r.eventf(fl, corev1.EventTypeNormal, "DrainSkipped",
+		r.eventf(fl, corev1.EventTypeNormal, "DrainSkipped", "Drain",
 			"retainIndexesOnDelete is set; Redis search indexes were left in place")
 		return r.releaseFinalizer(ctx, fl)
 	}
@@ -97,7 +97,7 @@ func (r *FeedListenerReconciler) finalize(ctx context.Context, fl *elitev1alpha1
 	switch {
 	case job.Status.Succeeded > 0:
 		log.Info("drain complete; releasing finalizer")
-		r.eventf(fl, corev1.EventTypeNormal, "Drained", "Redis search indexes purged")
+		r.eventf(fl, corev1.EventTypeNormal, "Drained", "Drain", "Redis search indexes purged")
 		return r.releaseFinalizer(ctx, fl)
 
 	case jobFailed(job):
@@ -106,7 +106,7 @@ func (r *FeedListenerReconciler) finalize(ctx context.Context, fl *elitev1alpha1
 		// namespace and needs a hand-edit to clear. Surface it loudly and let go.
 		log.Error(fmt.Errorf("drain job %s failed", job.Name),
 			"releasing finalizer despite failed drain; Redis indexes may be stale")
-		r.eventf(fl, corev1.EventTypeWarning, "DrainFailed",
+		r.eventf(fl, corev1.EventTypeWarning, "DrainFailed", "Drain",
 			"Drain job %s failed after %d attempts; Redis search indexes may be left behind",
 			job.Name, drainJobBackoffLimit)
 		return r.releaseFinalizer(ctx, fl)
@@ -212,7 +212,7 @@ func (r *FeedListenerReconciler) ensureDrainJob(ctx context.Context, fl *elitev1
 	if err := r.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
 		return nil, fmt.Errorf("creating drain job: %w", err)
 	}
-	r.eventf(fl, corev1.EventTypeNormal, "Draining",
+	r.eventf(fl, corev1.EventTypeNormal, "Draining", "Drain",
 		"Purging Redis search indexes via job %s", desired.Name)
 	return desired, nil
 }

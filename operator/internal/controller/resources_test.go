@@ -28,6 +28,10 @@ func testFeedListener(consumers int32) *elitev1alpha1.FeedListener {
 	}
 }
 
+// altRelayEndpoint is any relay that is not the one newFeedListener starts with. Tests use it to
+// make the spec differ, so what matters is only that it is distinct from the default.
+const altRelayEndpoint = "tcp://relay.example.org:9500"
+
 // .NET's TimeSpan parser rejects Go's native duration format outright, so a regression here
 // would not fail loudly — the consumer would silently fall back to its default threshold.
 func TestASPNetDuration(t *testing.T) {
@@ -55,13 +59,13 @@ func TestHashConfigDataIsStableAndSensitive(t *testing.T) {
 	fl := testFeedListener(1)
 
 	first := hashConfigData(buildConfigData(fl))
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if got := hashConfigData(buildConfigData(fl)); got != first {
 			t.Fatalf("hash changed across calls: %q then %q", first, got)
 		}
 	}
 
-	fl.Spec.RelayEndpoint = "tcp://relay.example.org:9500"
+	fl.Spec.RelayEndpoint = altRelayEndpoint
 	if got := hashConfigData(buildConfigData(fl)); got == first {
 		t.Error("hash did not change when the relay endpoint changed")
 	}
@@ -76,7 +80,7 @@ func TestShardPartitionIsExhaustiveAndDisjoint(t *testing.T) {
 		seen := map[string]int{}
 		names := map[string]bool{}
 
-		for shard := int32(0); shard < consumers; shard++ {
+		for shard := range consumers {
 			deploy := BuildShardDeployment(fl, shard, "hash")
 
 			if names[deploy.Name] {
@@ -90,12 +94,12 @@ func TestShardPartitionIsExhaustiveAndDisjoint(t *testing.T) {
 
 			var index string
 			for _, env := range deploy.Spec.Template.Spec.Containers[0].Env {
-				if env.Name == "Eddn__ShardIndex" {
+				if env.Name == shardIndexEnvVar {
 					index = env.Value
 				}
 			}
 			if index == "" {
-				t.Fatalf("consumers=%d shard=%d: no Eddn__ShardIndex set", consumers, shard)
+				t.Fatalf("consumers=%d shard=%d: no %s set", consumers, shard, shardIndexEnvVar)
 			}
 			seen[index]++
 		}
@@ -103,7 +107,7 @@ func TestShardPartitionIsExhaustiveAndDisjoint(t *testing.T) {
 		if len(seen) != int(consumers) {
 			t.Errorf("consumers=%d: covered %d distinct shard indexes, want %d", consumers, len(seen), consumers)
 		}
-		for shard := int32(0); shard < consumers; shard++ {
+		for shard := range consumers {
 			key := fmt.Sprint(shard)
 			if seen[key] != 1 {
 				t.Errorf("consumers=%d: shard index %s assigned %d times, want exactly 1", consumers, key, seen[key])
@@ -169,7 +173,7 @@ func TestIsOwnedShard(t *testing.T) {
 func TestSelectorLabelsAreSpecIndependent(t *testing.T) {
 	a := testFeedListener(1)
 	b := testFeedListener(8)
-	b.Spec.RelayEndpoint = "tcp://relay.example.org:9500"
+	b.Spec.RelayEndpoint = altRelayEndpoint
 	b.Spec.Image = "different:tag"
 
 	first, second := selectorLabels(a), selectorLabels(b)

@@ -9,7 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -25,7 +25,7 @@ import (
 type FeedListenerReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 
 	// StreamProbe reports feed health from a consumer pod. Injected so tests can run the
 	// controller without standing up an HTTP server.
@@ -39,6 +39,7 @@ type FeedListenerReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=configmaps;services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
 
@@ -248,7 +249,7 @@ func (r *FeedListenerReconciler) pruneStaleShards(ctx context.Context, fl *elite
 		if err := r.Delete(ctx, deploy); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("pruning shard %d: %w", shard, err)
 		}
-		r.eventf(fl, corev1.EventTypeNormal, "ShardPruned",
+		r.eventf(fl, corev1.EventTypeNormal, "ShardPruned", "Prune",
 			"Removed shard %d; consumer count is now %d", shard, fl.Spec.Consumers)
 	}
 	return nil
@@ -257,18 +258,24 @@ func (r *FeedListenerReconciler) pruneStaleShards(ctx context.Context, fl *elite
 // failed records a reconcile error on the resource before returning it, so an operator reading
 // `kubectl describe` sees why the feed is stuck without going to the controller logs.
 func (r *FeedListenerReconciler) failed(ctx context.Context, fl *elitev1alpha1.FeedListener, reason string, err error) (ctrl.Result, error) {
-	r.eventf(fl, corev1.EventTypeWarning, reason, "%v", err)
+	r.eventf(fl, corev1.EventTypeWarning, reason, "Reconcile", "%v", err)
 	if statusErr := r.markDegraded(ctx, fl, reason, err); statusErr != nil {
 		logf.FromContext(ctx).Error(statusErr, "recording degraded status")
 	}
 	return ctrl.Result{}, err
 }
 
-func (r *FeedListenerReconciler) eventf(fl *elitev1alpha1.FeedListener, eventType, reason, messageFmt string, args ...any) {
+// eventf records one event against the FeedListener.
+//
+// This uses the events.k8s.io/v1 recorder rather than the deprecated core/v1 one, which is why
+// the signature carries an action: the new API separates *what the controller was doing* (action,
+// a machine-readable verb) from *what happened* (reason). The "related" object is always nil —
+// every event here is about the FeedListener itself, not about a second object it acted on.
+func (r *FeedListenerReconciler) eventf(fl *elitev1alpha1.FeedListener, eventType, reason, action, messageFmt string, args ...any) {
 	if r.Recorder == nil {
 		return
 	}
-	r.Recorder.Eventf(fl, eventType, reason, messageFmt, args...)
+	r.Recorder.Eventf(fl, nil, eventType, reason, action, messageFmt, args...)
 }
 
 // feedListenerTriggers decides which writes to a FeedListener wake the controller.
@@ -307,7 +314,7 @@ func (r *FeedListenerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.StreamProbe = NewHTTPStreamProbe()
 	}
 	if r.Recorder == nil {
-		r.Recorder = mgr.GetEventRecorderFor("feedlistener-controller")
+		r.Recorder = mgr.GetEventRecorder("feedlistener-controller")
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).

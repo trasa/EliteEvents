@@ -44,7 +44,7 @@ var _ = Describe("FeedListener Controller", func() {
 	// see "creates every child on the first pass" below, which pins that directly.
 	reconcileUntilStable := func() {
 		GinkgoHelper()
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 			Expect(err).NotTo(HaveOccurred())
 		}
@@ -93,7 +93,7 @@ var _ = Describe("FeedListener Controller", func() {
 			Expect(k8sClient.Get(ctx, key, &svc)).To(Succeed())
 
 			indexes := map[string]bool{}
-			for shard := 0; shard < 3; shard++ {
+			for shard := range 3 {
 				var deploy appsv1.Deployment
 				deployKey := types.NamespacedName{Name: fmt.Sprintf("%s-%d", name, shard), Namespace: namespace}
 				Expect(k8sClient.Get(ctx, deployKey, &deploy)).To(Succeed())
@@ -103,7 +103,7 @@ var _ = Describe("FeedListener Controller", func() {
 				Expect(deploy.Spec.Strategy.Type).To(Equal(appsv1.RecreateDeploymentStrategyType))
 
 				for _, env := range deploy.Spec.Template.Spec.Containers[0].Env {
-					if env.Name == "Eddn__ShardIndex" {
+					if env.Name == shardIndexEnvVar {
 						indexes[env.Value] = true
 					}
 				}
@@ -143,7 +143,7 @@ var _ = Describe("FeedListener Controller", func() {
 			Expect(k8sClient.Update(ctx, &fl)).To(Succeed())
 			reconcileUntilStable()
 
-			for shard := 0; shard < 2; shard++ {
+			for shard := range 2 {
 				var deploy appsv1.Deployment
 				deployKey := types.NamespacedName{Name: fmt.Sprintf("%s-%d", name, shard), Namespace: namespace}
 				Expect(k8sClient.Get(ctx, deployKey, &deploy)).To(Succeed(), "shard %d should survive", shard)
@@ -168,7 +168,7 @@ var _ = Describe("FeedListener Controller", func() {
 
 			var fl elitev1alpha1.FeedListener
 			Expect(k8sClient.Get(ctx, key, &fl)).To(Succeed())
-			fl.Spec.RelayEndpoint = "tcp://relay.example.org:9500"
+			fl.Spec.RelayEndpoint = altRelayEndpoint
 			Expect(k8sClient.Update(ctx, &fl)).To(Succeed())
 			reconcileUntilStable()
 
@@ -211,7 +211,7 @@ var _ = Describe("FeedListener Controller", func() {
 				To(Succeed(), "the first pass must register the finalizer AND build the children")
 			var svc corev1.Service
 			Expect(k8sClient.Get(ctx, key, &svc)).To(Succeed())
-			for shard := 0; shard < 2; shard++ {
+			for shard := range 2 {
 				var deploy appsv1.Deployment
 				deployKey := types.NamespacedName{Name: fmt.Sprintf("%s-%d", name, shard), Namespace: namespace}
 				Expect(k8sClient.Get(ctx, deployKey, &deploy)).To(Succeed())
@@ -352,7 +352,7 @@ var _ = Describe("FeedListener Controller", func() {
 					Labels: map[string]string{
 						nameLabel:      "feed-maintenance",
 						instanceLabel:  name,
-						partOfLabel:    "elite-events",
+						partOfLabel:    partOfValue,
 						componentLabel: "maintenance",
 					},
 				},
@@ -457,7 +457,7 @@ var _ = Describe("FeedListener Controller", func() {
 			Expect(k8sClient.Get(ctx, key, &fl)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, &fl)).To(Succeed())
 
-			for i := 0; i < 2; i++ {
+			for range 2 {
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 				Expect(err).NotTo(HaveOccurred())
 			}
