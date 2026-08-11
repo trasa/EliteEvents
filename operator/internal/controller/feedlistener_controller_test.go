@@ -39,8 +39,9 @@ var _ = Describe("FeedListener Controller", func() {
 		reconciler *FeedListenerReconciler
 	)
 
-	// reconcileUntilStable drives the loop the way the manager would. The first pass only
-	// registers the finalizer and returns, so a single call would never create anything.
+	// reconcileUntilStable drives the loop the way the manager would, and re-running a settled
+	// reconcile also exercises idempotence. A single pass is now enough to create everything —
+	// see "creates every child on the first pass" below, which pins that directly.
 	reconcileUntilStable := func() {
 		GinkgoHelper()
 		for i := 0; i < 5; i++ {
@@ -188,6 +189,68 @@ var _ = Describe("FeedListener Controller", func() {
 			Expect(fl.Status.DesiredConsumers).To(BeEquivalentTo(1))
 			// No pods exist under envtest, so the feed is correctly reported as not yet up.
 			Expect(fl.Status.Phase).To(Equal("Pending"))
+		})
+
+		// The finalizer is registered by a metadata write, which does not bump generation and is
+		// therefore filtered by feedListenerTriggers. Reconcile has to finish the job in the same
+		// pass; if it goes back to returning early after registering, a real deploy would leave a
+		// finalizer, no children, and nothing scheduled to wake it. Reconciling exactly once is
+		// the whole point of this test — do not swap it for reconcileUntilStable.
+		It("creates every child on the first pass, without a second event", func() {
+			Expect(k8sClient.Create(ctx, newFeedListener(2))).To(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+
+			var fl elitev1alpha1.FeedListener
+			Expect(k8sClient.Get(ctx, key, &fl)).To(Succeed())
+			Expect(fl.Finalizers).To(ContainElement(elitev1alpha1.FeedListenerFinalizer))
+
+			var cm corev1.ConfigMap
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name + "-config", Namespace: namespace}, &cm)).
+				To(Succeed(), "the first pass must register the finalizer AND build the children")
+			var svc corev1.Service
+			Expect(k8sClient.Get(ctx, key, &svc)).To(Succeed())
+			for shard := 0; shard < 2; shard++ {
+				var deploy appsv1.Deployment
+				deployKey := types.NamespacedName{Name: fmt.Sprintf("%s-%d", name, shard), Namespace: namespace}
+				Expect(k8sClient.Get(ctx, deployKey, &deploy)).To(Succeed())
+			}
+		})
+
+		// The premise feedListenerTriggers rests on: everything a settled reconcile writes goes to
+		// the status subresource, which never bumps generation. If a future change starts writing
+		// spec or labels from reconcileStatus, generation would move on every poll, the predicate
+		// would admit every one of those events, and the self-triggering loop is back.
+		It("writes nothing on a settled pass that would re-trigger the watch", func() {
+			Expect(k8sClient.Create(ctx, newFeedListener(1))).To(Succeed())
+			reconcileUntilStable()
+
+			var before elitev1alpha1.FeedListener
+			Expect(k8sClient.Get(ctx, key, &before)).To(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+
+			var after elitev1alpha1.FeedListener
+			Expect(k8sClient.Get(ctx, key, &after)).To(Succeed())
+
+			Expect(after.Generation).To(Equal(before.Generation),
+				"a poll that bumps generation makes the controller trigger itself on its own status write")
+			Expect(after.Spec).To(Equal(before.Spec))
+			Expect(after.Finalizers).To(Equal(before.Finalizers))
+		})
+
+		// The requeue is the only thing left driving the poll once the watch stops delivering the
+		// controller's own status writes back to it.
+		It("asks to be requeued so feed health keeps being polled", func() {
+			Expect(k8sClient.Create(ctx, newFeedListener(1))).To(Succeed())
+			reconcileUntilStable()
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(statusPollInterval),
+				"nothing else wakes the controller for feed health; a relay going quiet changes nothing in the API")
 		})
 	})
 

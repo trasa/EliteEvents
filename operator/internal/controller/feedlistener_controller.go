@@ -11,9 +11,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	elitev1alpha1 "github.com/trasa/EliteEvents/operator/api/v1alpha1"
 )
@@ -56,14 +59,21 @@ func (r *FeedListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// The finalizer must be in place before any child exists, so a delete that lands mid-create
-	// still gets a drain. Registering it is a spec write, which produces its own watch event —
-	// so return and let that event carry us into the rest of the reconcile.
+	// still gets a drain.
+	//
+	// This used to register the finalizer and return, letting the watch event from its own write
+	// carry the reconcile forward. That is no longer safe and was always fragile: adding a
+	// finalizer is a *metadata* change, so it does not bump metadata.generation, and
+	// feedListenerTriggers now filters exactly that kind of event. The early return would leave a
+	// brand-new resource with a finalizer, no children, and nothing scheduled to wake it.
+	// Falling through instead makes the first pass self-sufficient — r.Update has already written
+	// the new resourceVersion back into fl, so the rest of the reconcile operates on a current
+	// object.
 	if !controllerutil.ContainsFinalizer(&fl, elitev1alpha1.FeedListenerFinalizer) {
 		controllerutil.AddFinalizer(&fl, elitev1alpha1.FeedListenerFinalizer)
 		if err := r.Update(ctx, &fl); err != nil {
 			return ctrl.Result{}, fmt.Errorf("registering finalizer: %w", err)
 		}
-		return ctrl.Result{}, nil
 	}
 
 	configHash, err := r.reconcileConfigMap(ctx, &fl)
@@ -261,6 +271,36 @@ func (r *FeedListenerReconciler) eventf(fl *elitev1alpha1.FeedListener, eventTyp
 	r.Recorder.Eventf(fl, eventType, reason, messageFmt, args...)
 }
 
+// feedListenerTriggers decides which writes to a FeedListener wake the controller.
+//
+// Without it, For(&FeedListener{}) wakes on every write to the resource — including the
+// controller's own Status().Update at the end of reconcileStatus. That status carries
+// LastMessageTime, which advances continuously on a live feed, so every scheduled poll produced a
+// second, immediate reconcile and a second status write. Measured in production before this
+// predicate: 12 reconciles per 180s against the 6 that statusPollInterval asks for, indefinitely.
+//
+// Generation is the signal that separates the two cases, because status subresource writes never
+// bump metadata.generation while spec edits always do.
+//
+// Deletion is admitted explicitly rather than leaning on the API server also bumping generation
+// when it stamps deletionTimestamp. That behaviour is real, but the drain is the one path where a
+// missed event wedges the namespace behind an unsatisfiable finalizer, so it should not rest on a
+// detail this far from the code. Create, Delete and Generic events are not filtered at all —
+// predicate.Funcs admits anything its fields leave unset.
+func feedListenerTriggers() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if e.ObjectOld == nil || e.ObjectNew == nil {
+				return true
+			}
+			if !e.ObjectNew.GetDeletionTimestamp().IsZero() {
+				return true
+			}
+			return e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration()
+		},
+	}
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *FeedListenerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.StreamProbe == nil {
@@ -271,7 +311,7 @@ func (r *FeedListenerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&elitev1alpha1.FeedListener{}).
+		For(&elitev1alpha1.FeedListener{}, builder.WithPredicates(feedListenerTriggers())).
 		// Owning the children means a hand-edited or deleted child triggers a reconcile that
 		// puts it back, rather than drifting until something notices.
 		Owns(&appsv1.Deployment{}).
