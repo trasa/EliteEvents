@@ -70,12 +70,29 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
+          # The memory limit is an *input* to the .NET GC, not just a ceiling on it. The image
+          # ships System.GC.Server=true (the ASP.NET Core SDK default), and in a container .NET
+          # sets its GC heap hard limit to 75% of the cgroup limit — so a 384Mi limit told the GC
+          # it could grow to 288MiB, and it did: both pods sat at 308-336MiB indefinitely on a
+          # site with essentially no traffic. That was never a leak. Memory was flat over
+          # observation, no pod has ever been OOMKilled, and the ingestion container runs at 68MiB
+          # off the same image base and the same 384Mi limit purely because it allocates less.
+          #
+          # 256Mi puts the heap hard limit at 192MiB and the pods around 210MiB, which reclaims
+          # roughly 260MiB of limit commitment across the two replicas. That matters because
+          # per-node limits are committed well past allocatable (108-197% at the time of writing);
+          # requests are the healthy number, but the margin is thinner than "no MemoryPressure"
+          # suggests, and these were the two largest contributors.
+          #
+          # The failure mode if this is too low is an OOMKill, so it is the number to raise first
+          # if the site ever gets real traffic. Watch for restartCount climbing with
+          # lastState.terminated.reason=OOMKilled.
           resources:
             requests:
               cpu: 100m
               memory: 128Mi
             limits:
-              memory: 384Mi
+              memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

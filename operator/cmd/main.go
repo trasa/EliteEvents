@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -28,6 +29,10 @@ var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
 )
+
+// ptrDuration exists because ctrl.Options takes the lease timings as *time.Duration, so that
+// "unset" is distinguishable from "zero" and the defaults can apply.
+func ptrDuration(d time.Duration) *time.Duration { return &d }
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -145,6 +150,30 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "b1d126e7.meancat.com",
+
+		// Lease timings, widened well past the controller-runtime defaults of 15s/10s/2s.
+		//
+		// Losing the lease is not a soft failure: controller-runtime returns from mgr.Start and
+		// main exits 1. On this cluster that was the entire restart history — four in the last
+		// day, and the 46 on the previous pod — every one of them "leader election lost" after a
+		// renewal call missed its 10s deadline. Nothing was wrong with the operator; the DOKS
+		// control plane is non-HA, so it goes away briefly during its own maintenance and any
+		// blip longer than the renew deadline kills a process that was working fine.
+		//
+		// Leader election itself is kept rather than switched off. The manager Deployment rolls
+		// with the default RollingUpdate, so a new pod is Ready while the old one is still
+		// running, and two managers reconciling one FeedListener would race on the shard
+		// Deployments and the drain. The lease is what makes that overlap safe; the defaults were
+		// simply tuned for a control plane that is always there.
+		//
+		// The cost of widening is failover latency: if the leader dies uncleanly, the next one
+		// waits out LeaseDuration before taking over. At one replica that is a pod restart taking
+		// up to a minute longer to resume reconciling, against a control loop whose own poll
+		// interval is 30s. That is a trade worth making to stop killing a healthy process.
+		LeaseDuration: ptrDuration(60 * time.Second),
+		RenewDeadline: ptrDuration(40 * time.Second),
+		RetryPeriod:   ptrDuration(10 * time.Second),
+
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
