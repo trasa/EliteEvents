@@ -22,7 +22,7 @@ spec:
   # The controller does not track image tags; this is the deployed version, the same way
   # kustomization.yaml records the web tier's. `./deploy-k8s <tag>` does NOT rewrite this — an
   # ingestion upgrade is an edit here followed by `kubectl apply -k k8s/`.
-  image: registry.digitalocean.com/meancat/elite-ingestion:1.0.0-alpha.g922a125adf
+  image: registry.digitalocean.com/meancat/elite-ingestion:1.0.0-alpha.gd36a6ca82d
   imagePullSecrets:
     # DOKS's registry integration names this secret after the registry itself.
     - name: meancat
