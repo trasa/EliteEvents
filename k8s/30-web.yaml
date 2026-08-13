@@ -70,29 +70,33 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
-          # The memory limit is an *input* to the .NET GC, not just a ceiling on it. The image
-          # ships System.GC.Server=true (the ASP.NET Core SDK default), and in a container .NET
-          # sets its GC heap hard limit to 75% of the cgroup limit — so a 384Mi limit told the GC
-          # it could grow to 288MiB, and it did: both pods sat at 308-336MiB indefinitely on a
-          # site with essentially no traffic. That was never a leak. Memory was flat over
-          # observation, no pod has ever been OOMKilled, and the ingestion container runs at 68MiB
-          # off the same image base and the same 384Mi limit purely because it allocates less.
+          # 384Mi, and don't lower it again without also lowering the GC's heap limit explicitly.
           #
-          # 256Mi puts the heap hard limit at 192MiB and the pods around 210MiB, which reclaims
-          # roughly 260MiB of limit commitment across the two replicas. That matters because
-          # per-node limits are committed well past allocatable (108-197% at the time of writing);
-          # requests are the healthy number, but the margin is thinner than "no MemoryPressure"
-          # suggests, and these were the two largest contributors.
+          # The limit is an *input* to the .NET GC, not just a ceiling on it. The image ships
+          # System.GC.Server=true (the ASP.NET Core SDK default), and in a container .NET sets its
+          # GC heap hard limit to 75% of the cgroup limit. So the limit buys two different things
+          # out of one number: how much heap the GC will keep, and how much room everything that
+          # *isn't* the GC heap gets on top of it.
           #
-          # The failure mode if this is too low is an OOMKill, so it is the number to raise first
-          # if the site ever gets real traffic. Watch for restartCount climbing with
-          # lastState.terminated.reason=OOMKilled.
+          # This was tried at 256Mi (2026-08-11) to reclaim limit commitment on a cluster whose
+          # per-node limits are committed past allocatable. It held for about a day and then both
+          # pods began OOMKilling on a ~12-18h cycle. 256Mi puts the heap hard limit at 192MiB,
+          # but non-heap — native, JIT, thread stacks, loader — is a fairly fixed ~43MiB here and
+          # does not shrink with it. That left ~16MiB of slack: the cgroup sat pinned at the limit
+          # (anon 224MiB of 256MiB, memory.events "max" climbing as it reclaimed page cache) until
+          # an allocation burst it couldn't satisfy. The GC was honouring its limit the whole time
+          # and never saw a problem, which is why this looks like a healthy process being killed.
+          #
+          # At 384Mi the heap limit is 288MiB and the pods sit flat at 308-336MiB with room to
+          # spare; no pod was ever OOMKilled at this setting. If the commitment number needs to
+          # come down again, the lever is DOTNET_GCHeapHardLimitPercent (or Workstation GC), set
+          # so heap + ~50MiB of non-heap fits under the new limit — not the limit on its own.
           resources:
             requests:
               cpu: 100m
               memory: 128Mi
             limits:
-              memory: 256Mi
+              memory: 384Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
