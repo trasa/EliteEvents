@@ -48,6 +48,14 @@ spec:
               value: redis:6379,abortConnect=false
             - name: REDIS_AUTH_FILE
               value: /etc/redis-auth/password
+            # 0x32 is 50, and the hex matters: every DOTNET_GC* environment variable is parsed
+            # as hexadecimal, so a bare "50" would mean 0x50 = 80 percent — worse than the 75
+            # percent default this is here to reduce. The "0x" prefix is accepted and is kept for
+            # exactly that reason. Nothing validates this value; a typo just silently resizes the
+            # heap, so it is checked against measured RSS after any change (see the resources
+            # comment below for the expected numbers).
+            - name: DOTNET_GCHeapHardLimitPercent
+              value: "0x32"
           livenessProbe:
             httpGet:
               path: /health/live
@@ -70,33 +78,43 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
-          # 384Mi, and don't lower it again without also lowering the GC's heap limit explicitly.
+          # This limit and DOTNET_GCHeapHardLimitPercent above are one setting in two places.
+          # Change either alone and you get the failure below.
           #
           # The limit is an *input* to the .NET GC, not just a ceiling on it. The image ships
-          # System.GC.Server=true (the ASP.NET Core SDK default), and in a container .NET sets its
-          # GC heap hard limit to 75% of the cgroup limit. So the limit buys two different things
-          # out of one number: how much heap the GC will keep, and how much room everything that
-          # *isn't* the GC heap gets on top of it.
+          # System.GC.Server=true (the ASP.NET Core SDK default), and in a container .NET takes
+          # 75% of the cgroup limit as its GC heap hard limit unless told otherwise — then grows
+          # to fill it. So one number was buying two things: the heap budget, and the room left
+          # over for everything that *isn't* the GC heap.
           #
-          # This was tried at 256Mi (2026-08-11) to reclaim limit commitment on a cluster whose
-          # per-node limits are committed past allocatable. It held for about a day and then both
-          # pods began OOMKilling on a ~12-18h cycle. 256Mi puts the heap hard limit at 192MiB,
-          # but non-heap — native, JIT, thread stacks, loader — is a fairly fixed ~43MiB here and
-          # does not shrink with it. That left ~16MiB of slack: the cgroup sat pinned at the limit
-          # (anon 224MiB of 256MiB, memory.events "max" climbing as it reclaimed page cache) until
-          # an allocation burst it couldn't satisfy. The GC was honouring its limit the whole time
-          # and never saw a problem, which is why this looks like a healthy process being killed.
+          # Splitting them is what makes a smaller limit safe. History, measured on this app:
           #
-          # At 384Mi the heap limit is 288MiB and the pods sit flat at 308-336MiB with room to
-          # spare; no pod was ever OOMKilled at this setting. If the commitment number needs to
-          # come down again, the lever is DOTNET_GCHeapHardLimitPercent (or Workstation GC), set
-          # so heap + ~50MiB of non-heap fits under the new limit — not the limit on its own.
+          #   384Mi, default 75%  -> 288MiB heap, RSS 308-336MiB. Never OOMKilled, but the
+          #                          largest single contributor to limit commitment on a cluster
+          #                          whose per-node limits run 108-197% of allocatable.
+          #   256Mi, default 75%  -> 192MiB heap, RSS pinned at the 256MiB ceiling (anon 224MiB,
+          #                          memory.events "max" climbing as it reclaimed page cache).
+          #                          Both pods OOMKilled on a ~12-18h cycle. The heap budget was
+          #                          never the problem: non-heap (native, JIT, thread stacks,
+          #                          loader) is a fairly fixed ~43MiB and does not scale down
+          #                          with it, so this left ~16MiB of slack for any burst. The GC
+          #                          stayed inside its own limit throughout, which is why the
+          #                          process looked healthy right up to the kill.
+          #   256Mi, explicit 50% -> 128MiB heap, expected RSS ~175MiB. ~80MiB of slack, ~5x the
+          #                          margin that failed, at the same commitment as the setting
+          #                          that OOMKilled. Current setting, as of 2026-08-13.
+          #
+          # Verifying it took effect is a memory reading, not a config check: RSS settling near
+          # 175MiB means the percent parsed as intended; RSS drifting back toward the ceiling
+          # means it didn't, and the value is wrong rather than the sizing. Raise the percent
+          # before the limit if real traffic ever needs more heap — the limit needs to keep its
+          # non-heap headroom either way.
           resources:
             requests:
               cpu: 100m
               memory: 128Mi
             limits:
-              memory: 384Mi
+              memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
