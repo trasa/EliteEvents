@@ -20,6 +20,10 @@ func testFeedListener(consumers int32) *elitev1alpha1.FeedListener {
 			Consumers:             consumers,
 			Image:                 "registry.digitalocean.com/meancat/elite-ingestion:1.0.0",
 			ReconnectAfterSilence: metav1.Duration{Duration: 2 * time.Minute},
+			// Set explicitly because these objects skip API-server defaulting: an unset field is
+			// the zero duration, which renders as a *disabled* watchdog rather than the 15m the
+			// CRD default would supply.
+			RedisUnreachableRestartAfter: metav1.Duration{Duration: 15 * time.Minute},
 			Redis: elitev1alpha1.RedisConfig{
 				ConnectionString: "redis:6379,abortConnect=false",
 				AuthSecret:       &elitev1alpha1.RedisAuthSecret{Name: "redis-auth", Key: "password"},
@@ -50,6 +54,58 @@ func TestASPNetDuration(t *testing.T) {
 		if got := aspNetDuration(tc.in); got != tc.want {
 			t.Errorf("aspNetDuration(%s) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// The consumers' liveness watchdog is configured entirely from spec, across a language boundary,
+// and every way it can break is silent. A Go-formatted duration is rejected by .NET's options
+// binding, which falls back to the code default — so a threshold widened during an incident would
+// appear to be set and do nothing. A missing key does the same. And because the value reaches the
+// pods through the ConfigMap, changing it has to move the config hash or running consumers keep
+// the old threshold indefinitely.
+func TestRedisLivenessThresholdReachesConsumers(t *testing.T) {
+	fl := testFeedListener(1)
+
+	data := buildConfigData(fl)
+	got, ok := data["RedisLiveness__UnreachableRestartThreshold"]
+	if !ok {
+		t.Fatal("RedisLiveness__UnreachableRestartThreshold absent from the consumer ConfigMap")
+	}
+	if got != "00:15:00" {
+		t.Errorf("threshold = %q, want %q (HH:MM:SS; .NET rejects Go's duration format)", got, "00:15:00")
+	}
+
+	before := hashConfigData(data)
+	fl.Spec.RedisUnreachableRestartAfter = metav1.Duration{Duration: 40 * time.Minute}
+	after := hashConfigData(buildConfigData(fl))
+	if before == after {
+		t.Error("config hash did not change when the threshold changed; running consumers would keep the old one")
+	}
+
+	// Zero is the documented off switch, and it has to survive the round trip as something .NET
+	// reads as zero rather than as a missing value that re-enables the default.
+	fl.Spec.RedisUnreachableRestartAfter = metav1.Duration{}
+	if got := buildConfigData(fl)["RedisLiveness__UnreachableRestartThreshold"]; got != "00:00:00" {
+		t.Errorf("disabled threshold = %q, want %q", got, "00:00:00")
+	}
+}
+
+// A consumer's liveness probe is the only thing that can end a wedged multiplexer, so the two
+// halves of its budget are pinned: the endpoint it calls, and the grace it adds on top of the
+// in-process threshold.
+func TestConsumerLivenessProbeTargetsHealthLive(t *testing.T) {
+	fl := testFeedListener(1)
+	probe := BuildShardDeployment(fl, 0, "hash").Spec.Template.Spec.Containers[0].LivenessProbe
+
+	if probe == nil {
+		t.Fatal("consumer has no liveness probe; a wedged Redis client would never be restarted")
+	}
+	if got := probe.HTTPGet.Path; got != "/health/live" {
+		t.Errorf("liveness path = %q, want %q", got, "/health/live")
+	}
+	if grace := probe.PeriodSeconds * probe.FailureThreshold; grace != 150 {
+		t.Errorf("probe grace = %ds, want 150s (period %ds x threshold %d)",
+			grace, probe.PeriodSeconds, probe.FailureThreshold)
 	}
 }
 

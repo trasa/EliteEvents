@@ -152,6 +152,10 @@ func buildConfigData(fl *elitev1alpha1.FeedListener) map[string]string {
 		"Eddn__ShardCount":            strconv.Itoa(int(fl.Spec.Consumers)),
 		"Eddn__ReconnectAfterSilence": aspNetDuration(fl.Spec.ReconnectAfterSilence.Duration),
 		"IndexMaintenance__Periodic":  strconv.FormatBool(!scheduled),
+		// Same HH:MM:SS contract as the reconnect threshold above, and the same silent failure if
+		// it is ever rendered Go-style: options binding would ignore the value and fall back to
+		// the code default, so a widened threshold set during an incident would do nothing.
+		"RedisLiveness__UnreachableRestartThreshold": aspNetDuration(fl.Spec.RedisUnreachableRestartAfter.Duration),
 	}
 	if fl.Spec.Redis.AuthSecret != nil {
 		data["REDIS_AUTH_FILE"] = redisAuthMountPath + "/" + fl.Spec.Redis.AuthSecret.Key
@@ -260,9 +264,15 @@ func BuildShardDeployment(fl *elitev1alpha1.FeedListener, shard int32, configHas
 			Name:  shardIndexEnvVar,
 			Value: strconv.Itoa(int(shard)),
 		}},
-		// Liveness runs no checks at all: answering proves the process is up. A quiet relay or
-		// an unreachable Redis must not restart a consumer that is already retrying — that is
-		// readiness' job to report, and the controller's job to surface as a condition.
+		// Liveness runs one check: Redis unreachable for spec.redisUnreachableRestartAfter. A
+		// quiet relay still isn't grounds for a restart — that is readiness' job to report and
+		// the controller's to surface as a condition — and neither is a consumer that is merely
+		// retrying, which is what the threshold buys. What it does catch is a Redis client that
+		// has stopped working permanently, which no amount of waiting resolves.
+		//
+		// PeriodSeconds x FailureThreshold adds 150s of its own grace on top of the threshold.
+		// That is deliberate slack, not redundancy: the two are tuned independently, and this
+		// half survives an image that ships without the check at all.
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{

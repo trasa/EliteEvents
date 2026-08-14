@@ -1,9 +1,10 @@
 using EliteEvents.Eddn.Config;
-using EliteEvents.Eddn.Storage;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 
-namespace EliteEvents.Web.Services;
+namespace EliteEvents.Eddn.Storage;
 
 /// <summary>
 /// PINGs Redis on a timer and records the result in <see cref="RedisConnectivityState"/>, which
@@ -18,9 +19,10 @@ namespace EliteEvents.Web.Services;
 /// that does its own asking means the timestamp always describes Redis.
 /// </para>
 /// <para>
-/// It lives in the web host rather than the storage layer for the same reason
-/// <c>SearchIndexMaintenanceService</c> lives in Ingestion: the shared library holds the logic,
-/// the host decides what runs on a schedule.
+/// Scheduling is normally the host's job here — <c>SearchIndexMaintenanceService</c> lives in
+/// Ingestion because <em>which</em> pods rebuild the index, and when, is a deployment policy. This
+/// loop has no such policy: every host that talks to Redis wants the same probe on the same
+/// terms, so it is shared rather than written twice.
 /// </para>
 /// </remarks>
 public sealed class RedisConnectivityMonitor : BackgroundService

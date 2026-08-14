@@ -36,10 +36,10 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers the state and health check behind the Redis liveness watchdog. The host still
-    /// has to run something that probes Redis and calls
-    /// <see cref="RedisConnectivityState.MarkReachable"/> — see <c>RedisConnectivityMonitor</c> in
-    /// the web tier — and to tag the check into its own liveness endpoint.
+    /// Registers the whole Redis liveness watchdog: the state, the check that reads it, and the
+    /// monitor that keeps it current. The host supplies the last piece — tagging
+    /// <see cref="RedisLivenessHealthCheck"/> into its own <c>/health/live</c> endpoint, which is
+    /// the only part that differs between the two containers.
     /// </summary>
     public static IServiceCollection AddRedisLivenessWatchdog(this IServiceCollection services)
     {
@@ -47,6 +47,11 @@ public static class ServiceCollectionExtensions
         // reached Redis has to age from something, or it can never be judged stuck.
         services.TryAddSingleton(_ => new RedisConnectivityState(DateTimeOffset.UtcNow));
         services.TryAddSingleton<RedisLivenessHealthCheck>();
+
+        // The monitor rides along because the check is useless without it: a registration that
+        // added the check alone would report every pod healthy forever, which is the bug this
+        // whole mechanism exists to fix.
+        services.AddHostedService<RedisConnectivityMonitor>();
         return services;
     }
 

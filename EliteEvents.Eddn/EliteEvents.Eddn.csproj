@@ -18,6 +18,10 @@
         <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.2" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.2" />
         <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions" Version="10.0.2" />
+        <!-- For the Redis liveness watchdog's BackgroundService. Scheduling is normally the host's
+             job here (see SearchIndexMaintenanceService in Ingestion), but this particular loop is
+             identical in both hosts, so sharing it beats duplicating it. -->
+        <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.2" />
         <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.2" />
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" version="10.0.2" />
         <PackageReference Include="NetMQ" Version="4.0.4.2" />

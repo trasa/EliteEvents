@@ -79,6 +79,7 @@ func (in *FeedListenerSpec) DeepCopyInto(out *FeedListenerSpec) {
 	}
 	in.Redis.DeepCopyInto(&out.Redis)
 	out.ReconnectAfterSilence = in.ReconnectAfterSilence
+	out.RedisUnreachableRestartAfter = in.RedisUnreachableRestartAfter
 	in.Resources.DeepCopyInto(&out.Resources)
 	if in.IndexMaintenance != nil {
 		in, out := &in.IndexMaintenance, &out.IndexMaintenance

@@ -39,6 +39,18 @@ spec:
   # automatic recovery starts rather than at some unrelated moment.
   reconnectAfterSilence: 2m
 
+  # How long Redis may be *continuously* unreachable before a consumer's liveness probe fails and
+  # k8s restarts it. Matches the CRD default; written out so the knob is visible from the resource
+  # rather than only from the CRD, because the moment it is wanted is an incident.
+  #
+  # A wedged StackExchange.Redis client is not a retry — it holds sockets it never uses and never
+  # replaces, and waiting does not fix it. That took the web tier down for hours on 2026-08-14
+  # while every pod reported Running with zero restarts; a consumer fails even quieter, because it
+  # serves nothing to 503 with and simply stops writing. Anything shorter than this is a consumer
+  # that really is just retrying, and restarting those is the risk this trades against. Set to 0
+  # to disable the watchdog.
+  redisUnreachableRestartAfter: 15m
+
   # Search-index upkeep. index:systems and index:carriers cannot expire themselves, so they are
   # reconciled against the live 30-day data on a schedule. Omitting this block is the normal
   # case: the controller defaults it to an hourly CronJob running the ingestion image, and

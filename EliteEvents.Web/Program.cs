@@ -32,9 +32,6 @@ builder.Services
     .AddEliteRedisReader()
     .AddRedisLivenessWatchdog();
 
-// The watchdog's other half: something has to actually ask Redis whether it is there.
-builder.Services.AddHostedService<RedisConnectivityMonitor>();
-
 // Live ticker: one Redis subscription per pod, fanned out to that pod's SSE clients.
 builder.Services
     .AddSingleton<TickerFragmentRenderer>()

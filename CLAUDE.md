@@ -159,9 +159,12 @@ Three things justify an operator over a Deployment, and each shapes the code:
 
 Two cross-language contracts are easy to break silently:
 
-- **`Eddn__ReconnectAfterSilence` is rendered `HH:MM:SS`.** Go's `Duration.String()` produces
-  `2m0s`, which .NET's `TimeSpan` parser rejects — options binding would fall back to the default
-  and the spec value would be ignored with no error.
+- **Every duration in the ConfigMap is rendered `HH:MM:SS`** by `aspNetDuration` —
+  `Eddn__ReconnectAfterSilence` and `RedisLiveness__UnreachableRestartThreshold`. Go's
+  `Duration.String()` produces `2m0s`, which .NET's `TimeSpan` parser rejects — options binding
+  would fall back to the default and the spec value would be ignored with no error. That is
+  worst for the liveness threshold, whose whole point is being widenable mid-incident: it would
+  appear set and do nothing.
 - **`MessageShardFilter.StableHash` must never change.** It is FNV-1a over UTF-16 code units
   **plus a Murmur3 `fmix32` avalanche**. The avalanche is load-bearing: raw FNV-1a leaves the low
   bits unmixed (multiplying by an odd prime preserves them), so `% 2`, `% 4`, `% 8` and `% 16`
@@ -189,22 +192,34 @@ and `shardCount`, read per-pod by the FeedListener controller. It describes *thi
 which is the point: a shard reporting healthy receives but zero handled is a partition fault, not
 a feed outage.
 
-**Liveness differs by tier, and Web's is the interesting one.** Ingestion's `/health/live` still
-runs **no checks at all** — the process answering is the signal. Web's did too until 2026-08-14,
-when a wedged StackExchange.Redis multiplexer left both pods `Running` with 0 restarts and
-permanently `NotReady`: readiness emptied the Service and the site 503'd for hours, because a
-probe that can never fail cannot restart anything. Web now runs one liveness check,
-`RedisLivenessHealthCheck` (tag `live`), which fails only after Redis has been **continuously**
-unreachable for `RedisLiveness:UnreachableRestartThreshold` (15 min, set explicitly in
-`30-web.yaml` so it is tunable without a rebuild; `0` disables it).
+**Both tiers run exactly one liveness check**, `RedisLivenessHealthCheck` (tag `live`), which
+fails only after Redis has been **continuously** unreachable for
+`RedisLiveness:UnreachableRestartThreshold` — 15 min, and `0` disables it. Neither did until
+2026-08-14, when a wedged StackExchange.Redis multiplexer left both web pods `Running` with 0
+restarts and permanently `NotReady`: readiness emptied the Service and the site 503'd for hours,
+because a probe that can never fail cannot restart anything.
+
+Where the threshold comes from differs by tier, and both paths avoid an image rebuild:
+
+- **Web** reads it from an env var in `k8s/30-web.yaml`.
+- **Ingestion** reads it from the ConfigMap, written by the controller from
+  `spec.redisUnreachableRestartAfter` on the FeedListener. Editing the resource rolls the
+  consumers, because the value is part of the config hash.
+
+Ingestion was fixed second, and its version of the failure is quieter, not milder: a wedged
+consumer serves no 503s because it serves nothing — it just stops writing, and every counter on
+the site silently stops moving. A restart is also cheap there specifically: a shard is a single
+writer with `strategy: Recreate`, so it is briefly down either way, and a wedged one is already
+down in the only sense that matters.
 
 Two properties of that check are load-bearing and easy to undo:
 
 - **It never calls Redis.** The failure it detects is a client that *hangs* rather than fails, so
   a probe that called Redis could hang on exactly what it is meant to catch — and a probe that
-  never answers never trips. `RedisConnectivityMonitor` (a hosted service in Web) does the
-  calling on a timer and records the last success in `RedisConnectivityState`; the check only
-  reads that timestamp.
+  never answers never trips. `RedisConnectivityMonitor` does the calling on a timer and records
+  the last success in `RedisConnectivityState`; the check only reads that timestamp. Both are
+  registered by `AddRedisLivenessWatchdog()`, monitor included, because a host that registered
+  the check alone would report every pod healthy forever — the exact bug this replaces.
 - **Reachable-but-empty is unready, never unalive.** `RedisHealthCheck` fails readiness when
   Redis holds no Elite data, but restarting a pod cannot conjure data — routing that into
   liveness would restart-loop the whole tier on an empty keyspace.

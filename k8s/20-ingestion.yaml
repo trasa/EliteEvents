@@ -35,9 +35,17 @@ spec:
               value: redis:6379,abortConnect=false
             - name: REDIS_AUTH_FILE
               value: /etc/redis-auth/password
-          # Liveness runs no health checks at all — it only proves the process answers. A quiet
-          # EDDN period or an unreachable Redis must not get the single writer restarted while it
-          # is already retrying; that is readiness' job to report.
+            # Kept in step with the FeedListener's spec.redisUnreachableRestartAfter, which is
+            # what writes this key in the deployed path. This file is the rollback target, so a
+            # rollback that silently dropped the watchdog would restore the outage along with the
+            # Deployment.
+            - name: RedisLiveness__UnreachableRestartThreshold
+              value: "00:15:00"
+          # Liveness runs one check: Redis unreachable for the threshold above. A quiet EDDN
+          # period still must not get the single writer restarted while it is already retrying —
+          # that is readiness' job to report — and neither must a consumer that is merely
+          # reconnecting. What it catches is a Redis client that has stopped working for good,
+          # which no amount of waiting resolves and which otherwise just stops writing forever.
           livenessProbe:
             httpGet:
               path: /health/live

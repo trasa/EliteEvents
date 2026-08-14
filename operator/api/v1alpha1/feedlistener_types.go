@@ -144,6 +144,23 @@ type FeedListenerSpec struct {
 	// +kubebuilder:default="2m"
 	ReconnectAfterSilence metav1.Duration `json:"reconnectAfterSilence,omitempty"`
 
+	// redisUnreachableRestartAfter is how long Redis may be *continuously* unreachable before a
+	// consumer's liveness probe fails and Kubernetes restarts it. Zero disables the watchdog.
+	//
+	// This exists because "the process is running" and "the process still works" came apart: a
+	// wedged StackExchange.Redis multiplexer holds sockets it never uses and never replaces, and
+	// no amount of waiting fixes it. It took the web tier down for hours on 2026-08-14 while
+	// every pod reported Running with zero restarts. A consumer fails quieter still — it serves
+	// nothing, so nobody gets a 503; it just stops writing.
+	//
+	// The default is deliberately far longer than any reconnect a healthy client performs, so
+	// that everything below it is still treated as a pod that is merely retrying. This is a spec
+	// field rather than a constant so it can be widened, or zeroed, during an incident without
+	// rebuilding an image.
+	// +optional
+	// +kubebuilder:default="15m"
+	RedisUnreachableRestartAfter metav1.Duration `json:"redisUnreachableRestartAfter,omitempty"`
+
 	// resources overrides the compute resources of the consumer container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitzero"`
