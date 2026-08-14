@@ -28,9 +28,9 @@ labels:
 # apply is a no-op — but it also means an edit here is a real deploy instruction, not a default.
 images:
   - name: registry.digitalocean.com/meancat/elite-web
-    newTag: 1.0.0-alpha.ga4d0b00b5c
+    newTag: 1.0.0-alpha.ga1126e9def
   - name: registry.digitalocean.com/meancat/elite-ingestion
-    newTag: 1.0.0-alpha.ga4d0b00b5c
+    newTag: 1.0.0-alpha.ga1126e9def
 
 # The redis-auth Secret is deliberately absent: it is created once, out of band, and never
 # committed. See k8s/README.md.
