@@ -22,10 +22,18 @@ builder.Configuration.AddEnvironmentVariables();
 // Bound for the stream health check, which reports how long ago EDDN last said anything.
 builder.Services.Configure<EddnOptions>(builder.Configuration.GetSection("Eddn"));
 
+// How long Redis may be unreachable before this pod is considered unrecoverable. See
+// RedisConnectivityState for the outage this exists to end.
+builder.Services.Configure<RedisLivenessOptions>(builder.Configuration.GetSection("RedisLiveness"));
+
 // redis — read side only. Ingestion owns every write.
 builder.Services
     .AddEliteRedis(builder.Configuration)
-    .AddEliteRedisReader();
+    .AddEliteRedisReader()
+    .AddRedisLivenessWatchdog();
+
+// The watchdog's other half: something has to actually ask Redis whether it is there.
+builder.Services.AddHostedService<RedisConnectivityMonitor>();
 
 // Live ticker: one Redis subscription per pod, fanned out to that pod's SSE clients.
 builder.Services
@@ -41,6 +49,11 @@ builder.Services.AddHealthChecks()
     // monitor but deliberately left out of the "ready" set: a quiet firehose is no reason to pull
     // every web pod out of the service when they are still serving 30-day data perfectly well.
     .AddCheck<RedisHealthCheck>("redis", tags: ["ready"])
+    // Liveness is *not* the readiness check with a longer fuse: it fails only when Redis has been
+    // continuously unreachable for RedisLiveness:UnreachableRestartThreshold, which a pod that is
+    // merely retrying never reaches. "Redis reachable but empty" is unready, never unalive —
+    // restarting a pod cannot conjure data, and this check would loop it forever if it counted.
+    .AddCheck<RedisLivenessHealthCheck>("redis-liveness", tags: ["live"])
     .AddCheck<EddnStreamHealthCheck>("eddn-stream");
 
 var app = builder.Build();

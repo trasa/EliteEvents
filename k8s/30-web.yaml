@@ -56,6 +56,23 @@ spec:
             # comment below for the expected numbers).
             - name: DOTNET_GCHeapHardLimitPercent
               value: "0x32"
+            # How long Redis must be *continuously* unreachable before this pod is treated as
+            # unrecoverable and restarted. Set explicitly rather than left to the code default so
+            # it can be widened — or zeroed, which disables the watchdog — with an edit and a
+            # rollout, no image rebuild, at whatever hour the next incident happens.
+            - name: RedisLiveness__UnreachableRestartThreshold
+              value: "00:15:00"
+          # Liveness is no longer check-free. It used to answer unconditionally, on the reasoning
+          # that a process replying at all is worth keeping; on 2026-08-14 a wedged Redis client
+          # left both pods Running with 0 restarts and permanently NotReady, which emptied the
+          # Service and served 503s for hours. A probe that can never fail cannot restart
+          # anything, so an unrecoverable pod just sat there.
+          #
+          # What it runs now is a watchdog over sustained unreachability, not a Redis call — see
+          # RedisConnectivityState. Total time to restart is the threshold above plus
+          # periodSeconds x failureThreshold (150s), so ~17.5 min of continuous failure. Both
+          # halves are deliberately generous: everything faster than this is a pod that is merely
+          # retrying, and restarting those was the risk that kept liveness check-free.
           livenessProbe:
             httpGet:
               path: /health/live

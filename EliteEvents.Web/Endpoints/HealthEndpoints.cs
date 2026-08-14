@@ -25,8 +25,21 @@ public static class HealthEndpoints
             ResponseWriter = WriteDashboardJson
         });
 
-        // Liveness runs no checks: a response at all means the process is serving.
-        app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+        // Liveness runs exactly one check, and it is not "can I reach Redis right now".
+        //
+        // This endpoint answered unconditionally until 2026-08-14, on the reasoning that a
+        // process replying at all is a process worth keeping. That held until a wedged Redis
+        // multiplexer left both pods Running, zero restarts, and permanently NotReady: readiness
+        // emptied the Service, and nothing was left to notice that the pod would never recover.
+        // A liveness probe that can never fail cannot restart anything.
+        //
+        // The check it runs now is a watchdog over *sustained* unreachability, deliberately not a
+        // live Redis call — a probe that hangs on a hung client never fails, and a probe that
+        // fails on a two-second blip restarts a pod that was fine. See RedisConnectivityState.
+        app.MapHealthChecks("/health/live", new HealthCheckOptions
+        {
+            Predicate = check => check.Tags.Contains("live")
+        });
 
         // Readiness is Redis only — see the check registration in Program.cs for why the EDDN
         // stream is deliberately not part of it.

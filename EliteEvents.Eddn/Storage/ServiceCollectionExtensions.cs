@@ -35,6 +35,21 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Registers the state and health check behind the Redis liveness watchdog. The host still
+    /// has to run something that probes Redis and calls
+    /// <see cref="RedisConnectivityState.MarkReachable"/> — see <c>RedisConnectivityMonitor</c> in
+    /// the web tier — and to tag the check into its own liveness endpoint.
+    /// </summary>
+    public static IServiceCollection AddRedisLivenessWatchdog(this IServiceCollection services)
+    {
+        // Seeded at registration rather than at first probe: a process that has never once
+        // reached Redis has to age from something, or it can never be judged stuck.
+        services.TryAddSingleton(_ => new RedisConnectivityState(DateTimeOffset.UtcNow));
+        services.TryAddSingleton<RedisLivenessHealthCheck>();
+        return services;
+    }
+
     /// <summary>Read side: queries, the cached system count, live ticker subscription, health check.</summary>
     public static IServiceCollection AddEliteRedisReader(this IServiceCollection services)
     {

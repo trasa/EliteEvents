@@ -183,12 +183,35 @@ upgrading ingestion now means editing `spec.image`. The operator's own deployed 
 
 ## Health endpoints
 
-Both containers expose `/health/live` (**no checks at all** — the process answering is the signal)
-and `/health/ready`. Ingestion additionally serves `/health/stream` — JSON with `lastMessageUtc`,
-`messagesReceived`, `messagesHandled`, `shardIndex` and `shardCount`, read per-pod by the
-FeedListener controller. It describes *this instance only*, which is the point: a shard reporting
-healthy receives but zero handled is a partition fault, not a feed outage. Liveness is deliberately lenient so k8s doesn't restart a pod that is merely
-waiting out a quiet EDDN period or retrying Redis.
+Both containers expose `/health/live` and `/health/ready`. Ingestion additionally serves
+`/health/stream` — JSON with `lastMessageUtc`, `messagesReceived`, `messagesHandled`, `shardIndex`
+and `shardCount`, read per-pod by the FeedListener controller. It describes *this instance only*,
+which is the point: a shard reporting healthy receives but zero handled is a partition fault, not
+a feed outage.
+
+**Liveness differs by tier, and Web's is the interesting one.** Ingestion's `/health/live` still
+runs **no checks at all** — the process answering is the signal. Web's did too until 2026-08-14,
+when a wedged StackExchange.Redis multiplexer left both pods `Running` with 0 restarts and
+permanently `NotReady`: readiness emptied the Service and the site 503'd for hours, because a
+probe that can never fail cannot restart anything. Web now runs one liveness check,
+`RedisLivenessHealthCheck` (tag `live`), which fails only after Redis has been **continuously**
+unreachable for `RedisLiveness:UnreachableRestartThreshold` (15 min, set explicitly in
+`30-web.yaml` so it is tunable without a rebuild; `0` disables it).
+
+Two properties of that check are load-bearing and easy to undo:
+
+- **It never calls Redis.** The failure it detects is a client that *hangs* rather than fails, so
+  a probe that called Redis could hang on exactly what it is meant to catch — and a probe that
+  never answers never trips. `RedisConnectivityMonitor` (a hosted service in Web) does the
+  calling on a timer and records the last success in `RedisConnectivityState`; the check only
+  reads that timestamp.
+- **Reachable-but-empty is unready, never unalive.** `RedisHealthCheck` fails readiness when
+  Redis holds no Elite data, but restarting a pod cannot conjure data — routing that into
+  liveness would restart-loop the whole tier on an empty keyspace.
+
+The leniency that originally justified a check-free probe is still the point: everything shorter
+than the threshold is a pod merely waiting out a quiet EDDN period or retrying Redis, and those
+must not be restarted.
 
 Readiness differs by tier: Ingestion requires Redis **and** a fresh EDDN heartbeat; Web requires
 only Redis, because a silent firehose must not drain the Service while pods still serve 30-day
@@ -238,8 +261,11 @@ cd operator && make deploy IMG=<image> KUBE_CONTEXT=do-sfo3-elite
 ### Tests
 
 **`EliteEvents.Eddn.Tests`** (xUnit) is the only .NET test project. It covers `RedisKeys`,
-`WeeklyExpirationCalculator` and `MessageShardFilter` — pure logic, so it needs no Redis and runs
-in well under a second. The operator has its own suite under `operator/` (`make test`): unit tests
+`WeeklyExpirationCalculator`, `MessageShardFilter` and `RedisConnectivityState` — pure logic, so
+it needs no Redis and runs in well under a second. `RedisConnectivityState` takes `now` as a
+parameter for exactly this reason: the liveness watchdog's threshold behaviour is pinned against
+explicit instants, since both of its mistakes are expensive (tripping early restarts pods that
+were only retrying; never tripping restores the outage it was written for). The operator has its own suite under `operator/` (`make test`): unit tests
 for the resource builders plus an envtest suite that runs the reconciler against a real API
 server.
 
