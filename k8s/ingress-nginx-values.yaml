@@ -1,0 +1,58 @@
+# Helm values for the shared ingress-nginx release.
+#
+# This file exists because ingress-nginx serves TWO projects from one load balancer —
+# elite.meancat.com out of this repo, and cs260.meancat.com out of ~/prj/digipen/cs260-repos —
+# and the CS260 side depends on settings that are NOT chart defaults.
+#
+# ALWAYS pass this file when upgrading:
+#
+#   helm upgrade ingress-nginx ingress-nginx/ingress-nginx \
+#     --namespace ingress-nginx -f k8s/ingress-nginx-values.yaml
+#
+# A bare `helm upgrade` resets everything here to chart defaults. Helm does not merge with the
+# previous release unless you pass --reuse-values, so "I only wanted to bump the version" is
+# exactly how these get silently reverted.
+controller:
+  # Required by cert-manager and by any Ingress that needs a real LoadBalancer address.
+  publishService:
+    enabled: true
+
+  # Two replicas is a hard requirement of externalTrafficPolicy: Local below, not a capacity
+  # decision. Local makes only nodes that are running a controller pod valid load balancer
+  # targets; at one replica the whole ingress is a single point of failure.
+  replicaCount: 2
+
+  # Keep the replicas on separate nodes, so two replicas actually mean two healthy LB targets.
+  # Preferred rather than required: a briefly single-node cluster must still be able to schedule.
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: ingress-nginx
+                app.kubernetes.io/component: controller
+
+  service:
+    annotations:
+      service.beta.kubernetes.io/do-loadbalancer-name: elite-k8s-lb
+
+    # THE LOAD-BEARING LINE. Do not change it without reading this.
+    #
+    # elite-k8s-lb is a DigitalOcean REGIONAL_NETWORK (pass-through) load balancer, so it hands the
+    # real client address to the node. With the chart default of `Cluster`, kube-proxy then SNATs
+    # on the hop to a controller pod on another node and that address is lost — ingress-nginx logs
+    # a node's private address (10.124.0.x) and writes it into X-Forwarded-For.
+    #
+    # CS260 reads that header verbatim as a Redis lookup key (packetReportRouterFactory.js), so
+    # with `Cluster` its /packets page shows every student the same shared bucket. `Local` is what
+    # keeps the real client IP intact end to end.
+    #
+    # Do NOT try to solve this with PROXY protocol. `do-loadbalancer-enable-proxy-protocol` is
+    # silently ignored on a REGIONAL_NETWORK load balancer — the CCM reports EnsuredLoadBalancer
+    # while enable_proxy_protocol stays unset — while `use-proxy-protocol: "true"` makes nginx
+    # expect a header that never arrives, which takes down every site on this ingress. That was
+    # tried on 2026-08-14 and cost ~4 minutes of downtime on elite.meancat.com.
+    externalTrafficPolicy: Local
