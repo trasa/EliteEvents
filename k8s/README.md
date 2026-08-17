@@ -69,12 +69,13 @@ doctl projects resources assign "$PROJECT" --resource="do:kubernetes:$CLUSTER_ID
 doctl kubernetes cluster registry add "$CLUSTER"
 
 # 5. Ingress controller. Provisions the DO load balancer — naming it here makes it findable below.
+#    The settings live in a values file rather than --set flags because this controller is shared
+#    with the CS260 stack, which depends on some of them. See "Shared with CS260" below.
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm repo update
 helm install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx --create-namespace \
-  --set controller.publishService.enabled=true \
-  --set controller.service.annotations."service\.beta\.kubernetes\.io/do-loadbalancer-name"=elite-k8s-lb
+  -f k8s/ingress-nginx-values.yaml
 
 # Wait for DigitalOcean to finish provisioning it (a few minutes), then put it in the project too.
 kubectl -n ingress-nginx get svc ingress-nginx-controller -w
@@ -275,6 +276,31 @@ Then put `20-ingestion.yaml` back in `kustomization.yaml` in place of `25-feedli
 
 If `delete feed` appears to hang, `kubectl -n elite get jobs` shows the drain Job and its logs say
 why; it gives up after 3 attempts and releases rather than wedging the namespace.
+
+## Shared with CS260 — read before touching ingress-nginx
+
+Since 2026-08-15 this cluster also runs the CS260 teaching stack in the `cs260` namespace
+(`~/prj/digipen/cs260-repos/cs260-server/k8s/`), and `cs260.meancat.com` is served by **this**
+ingress-nginx release and **this** load balancer. The two apps are otherwise unrelated — separate
+namespaces, separate Redis, separate registry images — but they share the ingress.
+
+**Always upgrade ingress-nginx with the values file:**
+
+```bash
+helm upgrade ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx -f k8s/ingress-nginx-values.yaml
+```
+
+A bare `helm upgrade` resets to chart defaults — Helm does not merge with the previous release
+unless you pass `--reuse-values` — which would drop `replicaCount: 2` and
+`externalTrafficPolicy: Local`. EliteEvents would not visibly care; CS260's `/packets` page would
+silently start showing every student the same shared bucket, because it reads `X-Forwarded-For`
+verbatim as a Redis key and `Cluster` policy replaces the client address with a node's private one.
+The reasoning is written out in full in `k8s/ingress-nginx-values.yaml`.
+
+Note that CS260's raw TCP/UDP assignment ports do **not** go through this ingress — they have their
+own pass-through load balancer, because nginx stream proxying would rewrite the source address.
+Nothing you do to ingress-nginx affects those.
 
 ## Things worth knowing
 
