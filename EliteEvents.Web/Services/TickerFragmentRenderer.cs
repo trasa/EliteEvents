@@ -17,7 +17,7 @@ namespace EliteEvents.Web.Services;
 public sealed class TickerFragmentRenderer : IAsyncDisposable
 {
     private readonly AsyncServiceScope _scope;
-    private readonly HtmlRenderer _renderer;
+    private readonly ILoggerFactory _loggerFactory;
 
     public TickerFragmentRenderer(IServiceScopeFactory scopeFactory, ILoggerFactory loggerFactory)
     {
@@ -25,27 +25,31 @@ public sealed class TickerFragmentRenderer : IAsyncDisposable
         // provider. This one scope lives as long as the app: ticker rows inject nothing, and a
         // scope per event would be pure churn at firehose rates.
         _scope = scopeFactory.CreateAsyncScope();
-        _renderer = new HtmlRenderer(_scope.ServiceProvider, loggerFactory);
+        _loggerFactory = loggerFactory;
     }
 
-    public Task<string> RenderAsync(LiveEvent liveEvent)
+    public async Task<string> RenderAsync(LiveEvent liveEvent)
     {
+        // The renderer, unlike the scope, must not outlive the render: Renderer retains every
+        // root component ever rendered until it is disposed, so a shared HtmlRenderer grows by
+        // one component tree per event — a leak proportional to feed volume, not to traffic.
+        await using var renderer = new HtmlRenderer(_scope.ServiceProvider, _loggerFactory);
+
         // Every render has to run on the renderer's dispatcher; it is a single logical thread, and
         // ticker rows are tiny, so this is not a throughput concern at EDDN's event rate.
-        return _renderer.Dispatcher.InvokeAsync(async () =>
+        return await renderer.Dispatcher.InvokeAsync(async () =>
         {
             var parameters = ParameterView.FromDictionary(new Dictionary<string, object?>
             {
                 [nameof(TickerItem.Event)] = liveEvent
             });
-            var output = await _renderer.RenderComponentAsync<TickerItem>(parameters);
+            var output = await renderer.RenderComponentAsync<TickerItem>(parameters);
             return output.ToHtmlString();
         });
     }
 
     public async ValueTask DisposeAsync()
     {
-        await _renderer.DisposeAsync();
         await _scope.DisposeAsync();
     }
 }
