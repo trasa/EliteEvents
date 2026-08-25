@@ -6,6 +6,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
@@ -327,6 +328,46 @@ func TestMaintenanceCronJobForbidsConcurrentRebuilds(t *testing.T) {
 	}
 	if cj.Spec.JobTemplate.Spec.ActiveDeadlineSeconds == nil {
 		t.Error("expected an activeDeadlineSeconds bound on a rebuild")
+	}
+}
+
+// Neither one-shot pod may be BestEffort. This is a scheduling property, not a tidiness one: a
+// pod with no requests is invisible to the node-fit calculation, so kube-scheduler will place it
+// on a node with no memory left to give it. That is how the 2026-08-24 node stall happened — a
+// rebuild pod landed on a node down to ~55 MiB and drove it into reclaim until kubelet stopped
+// reporting and every pod there failed its liveness probe.
+//
+// Asserted through both builders rather than against oneShotResources directly, because the bug
+// this pins is the wiring — resources existing but never reaching the container spec.
+func TestOneShotPodsAreNotBestEffort(t *testing.T) {
+	fl := withMaintenance(testFeedListener(2), "17 * * * *")
+
+	for _, tc := range []struct {
+		name      string
+		container corev1.Container
+	}{
+		{"rebuild", BuildMaintenanceCronJob(fl).Spec.JobTemplate.Spec.Template.Spec.Containers[0]},
+		{"drain", BuildDrainJob(fl).Spec.Template.Spec.Containers[0]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A memory *request* is the part the scheduler reads; without it the pod is
+			// BestEffort no matter what limits say.
+			if tc.container.Resources.Requests.Memory().IsZero() {
+				t.Error("no memory request: the pod is BestEffort and the scheduler will " +
+					"place it on a node with nothing left to give it")
+			}
+			if tc.container.Resources.Requests.Cpu().IsZero() {
+				t.Error("no cpu request")
+			}
+			// The limit is what gives .NET's GC a budget to collect against; without it the
+			// heap is sized against the whole node.
+			if tc.container.Resources.Limits.Memory().IsZero() {
+				t.Error("no memory limit: .NET sizes its GC heap against the whole node")
+			}
+			if !tc.container.Resources.Limits.Cpu().IsZero() {
+				t.Error("a cpu limit would throttle a long SCAN into its 5s client timeout")
+			}
+		})
 	}
 }
 

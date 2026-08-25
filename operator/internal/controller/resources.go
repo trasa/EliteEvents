@@ -232,6 +232,35 @@ func defaultResources() corev1.ResourceRequirements {
 	}
 }
 
+// oneShotResources sizes the rebuild and drain pods. They must not be BestEffort, which is what
+// an unset ResourceRequirements makes them, and which cost an outage on 2026-08-24: a rebuild
+// pod landed on a node already down to ~55 MiB of 2 GB, its ~30 MiB was more than half the
+// remaining headroom, and the node went into reclaim until kubelet stopped reporting and every
+// pod on it failed its liveness probe. A BestEffort pod is invisible to the scheduler's fit
+// calculation, so nothing stopped it landing there — the request below is the part that fixes
+// that, by making the pod something the node has to have room for.
+//
+// The memory limit does a second, quieter job. Without a cgroup limit .NET sizes its GC heap
+// against the whole node, so a process that needs 30 MiB will happily let garbage accumulate
+// into hundreds; the limit is what makes it collect against a budget instead. 192Mi is roughly
+// 6x the measured working set, which leaves room for keyspace growth — the live sets here hold
+// ~48k names today — while still being a budget.
+//
+// No CPU limit, but not for the consumers' reason: there is no receive path to starve here. A
+// rebuild is a long SCAN against a 5s per-command client timeout, and throttling it would hold
+// that scan open longer and make the timeout more likely, not less.
+func oneShotResources() corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("50m"),
+			corev1.ResourceMemory: resource.MustParse("64Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse("192Mi"),
+		},
+	}
+}
+
 // BuildShardDeployment renders one shard of a feed.
 //
 // Each shard is its own Deployment with replicas: 1 rather than one Deployment with N replicas,
@@ -367,6 +396,7 @@ func oneShotPodSpec(fl *elitev1alpha1.FeedListener, containerName, arg string) c
 				LocalObjectReference: corev1.LocalObjectReference{Name: configMapName(fl)},
 			},
 		}},
+		Resources: oneShotResources(),
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: ptr(false),
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
