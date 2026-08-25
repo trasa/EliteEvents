@@ -11,11 +11,11 @@ never share data, so both can ingest from EDDN at the same time without double-c
 | Resource | Monthly |
 |---|---|
 | DOKS control plane (non-HA) | free |
-| 2 × `s-1vcpu-2gb` nodes | $24 |
+| 2 × `s-2vcpu-4gb` nodes | $48 |
 | Load balancer (ingress-nginx) | $12 |
 | Container registry, Basic tier | $5 |
 | 5 GiB block storage for Redis | ~$0.50 |
-| **Total** | **~$42** |
+| **Total** | **~$66** |
 
 The droplet stack keeps running alongside until Phase 5, so expect to pay for both during cutover.
 
@@ -48,11 +48,14 @@ doctl auth init                       # tokens expire; re-run when API calls sta
 doctl registry create "$REGISTRY" --subscription-tier basic --region "$REGION"
 
 # 2. Cluster. Roughly five minutes.
+#    s-2vcpu-4gb, not s-1vcpu-2gb: see "The node size is a floor" below before shrinking this.
+#    The live cluster's pool is named pool-2 rather than pool-1, because pool-1 was the original
+#    2 GB pool and was deleted rather than resized — DO cannot resize a pool in place.
 doctl kubernetes cluster create "$CLUSTER" \
   --region "$REGION" \
   --version latest \
   --ha=false \
-  --node-pool "name=pool-1;size=s-1vcpu-2gb;count=2;auto-scale=false" \
+  --node-pool "name=pool-1;size=s-2vcpu-4gb;count=2;auto-scale=false" \
   --wait
 
 # kubeconfig is merged and made the current context by the create; to fetch it again later:
@@ -320,9 +323,40 @@ docking event. `strategy: Recreate` is what stops a rolling update from briefly 
 `40-ingress.yaml` to `letsencrypt-staging`, confirm a certificate is issued, then move it to
 `letsencrypt-prod` — Let's Encrypt's rate limits are unforgiving of a misconfigured HTTP-01 loop.
 
-**Redis memory.** `maxmemory 256mb` with `allkeys-lru` against a 768Mi container limit on a 2 GB
-node. Every key is TTL'd and disposable, so eviction is the right failure mode; raise both
-together if the working set outgrows it.
+**Redis memory.** `maxmemory 256mb` with `allkeys-lru` against a 768Mi container limit. Every key
+is TTL'd and disposable, so eviction is the right failure mode; raise both together if the working
+set outgrows it.
+
+**The node size is a floor, not a preference.** The cluster ran on 3 × `s-1vcpu-2gb` until
+2026-08-24 and fell over repeatedly. DOKS's own daemonsets are most of a 2 GB node before the
+workload starts — cilium alone is ~200 MiB, plus cert-manager, hubble, konnectivity, csi and the
+telemetry agents. The nodes sat at 40–80 MiB of MemAvailable for days, then went `NodeNotReady`:
+kubelet stopped reporting, the HTTP liveness probes timed out, and the web and ingestion pods were
+killed. Shrinking the pool to save $24/month buys the outage back.
+
+**That failure looks exactly like a Redis problem, and isn't.** The logs fill with
+`RedisTimeoutException` and the web pods fail readiness on the Redis check, so the obvious read is
+a slow keyspace or a wedged client (the 2026-08-14 failure, described under "Health endpoints" in
+the repo's `CLAUDE.md`). The two are unrelated and share no fix. Four things rule Redis out in
+about a minute:
+
+- `used_memory` well under `maxmemory` with `evicted_keys:0` — the keyspace is not the problem.
+- The **slowlog is dominated by O(1) commands** (`SETEX`, `HINCRBY`, `ZADD`, `ZINCRBY`) taking
+  10–70 ms. Trivial commands running uniformly slow is CPU/memory starvation, not query cost. A
+  genuinely expensive query shows up as *one* slow command type, not all of them.
+- Redis's **own** `redis-cli ping` exec probe times out locally, inside the pod.
+- `bgsave` takes ~28 s when it normally takes ~1.5 s.
+
+For the node-side view, Prometheus is at `svc/prometheus` in the `lens-metrics` namespace
+(`kubectl port-forward -n lens-metrics svc/prometheus 9090:80`). Query
+`node_memory_MemAvailable_bytes`; the node-exporter **scrape gaps** mark the freeze window
+precisely, because the exporter stops answering too.
+
+**Check where `konnectivity-agent` is scheduled.** Both replicas can land on the same node, and
+that node stalling breaks `kubectl logs` and `kubectl exec` for *every* node with
+`No agent available` — including healthy ones. It removes your ability to diagnose at exactly the
+moment you need it, and it makes a one-node problem look cluster-wide. If you see that error
+against more than one node IP, look here first.
 
 **SSE through the ingress.** `proxy-buffering: off` and the long read timeout in the Ingress
 annotations are what keep `/api/stream` working. Without them the ticker silently stalls and then

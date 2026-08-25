@@ -325,8 +325,15 @@ forced off so the app starts and retries when Redis lags behind it.
 - **Registry:** DigitalOcean Container Registry, `registry.digitalocean.com/meancat`, repos
   `elite-web` and `elite-ingestion`. DOKS's registry integration creates a pull secret named after
   the registry — **`meancat`**, not `registry-meancat`.
-- **Cluster:** DOKS `elite` in sfo3, 2 × `s-1vcpu-2gb`, non-HA control plane. Redis runs
-  **in-cluster** as a single-replica StatefulSet; there is no managed database.
+- **Cluster:** DOKS `elite` in sfo3, 2 × `s-2vcpu-4gb` in node pool **`pool-2`**, non-HA control
+  plane. Redis runs **in-cluster** as a single-replica StatefulSet; there is no managed database.
+  It was 3 × `s-1vcpu-2gb` (`pool-1`) until 2026-08-24, when that pool was drained and deleted.
+  **Do not size this back down.** DOKS's own overhead — cilium alone is ~200 MiB, plus
+  cert-manager, hubble, konnectivity, csi and the telemetry agents — leaves a 2 GB node with
+  almost nothing for the workload. Those nodes sat at 40–80 MiB of MemAvailable for days and
+  repeatedly went `NodeNotReady`: kubelet stopped reporting, the HTTP liveness probes timed out,
+  and the web and ingestion pods were killed. Redis was never the problem, though it looks like
+  it in the logs — see the note on diagnosing that in `k8s/README.md`.
 - **Manifests:** `k8s/`, applied with `kubectl apply -k k8s/`. Full provisioning runbook and the
   reasoning behind the probe/redirect/TLS choices are in `k8s/README.md`.
 - **Versioning:** Nerdbank.GitVersioning (`version.json`, `nbgv`). CI needs `fetch-depth: 0`.
