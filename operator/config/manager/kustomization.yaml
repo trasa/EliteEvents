@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: registry.digitalocean.com/meancat/elite-operator
-  newTag: 1.0.0-alpha.ga1126e9def
+  newTag: 1.0.0-alpha.g5ce33480f2
