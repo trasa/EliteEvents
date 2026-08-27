@@ -363,8 +363,19 @@ Page views per day, health probes and the ticker excluded:
 ```promql
 sum(increase(http_server_request_duration_seconds_count{
   kubernetes_namespace="elite",
+  http_route=~"/.*",
   http_route!~"/health.*|/api/.*|/fragments/.*|/metrics"
 }[1d]))
+```
+
+**`http_route=~"/.*"` is not redundant, and dropping it roughly doubles the number.**
+`MapStaticAssets` registers one endpoint per asset, and those routes have **no leading slash** —
+`images/orrery_map.svg`, `fonts/EUROCAPS.TTF`. Every page, API and fragment route has one. That
+is the whole of the difference, so requiring a leading slash is what separates a page view from a
+webfont. Check it against the live label set before trusting a variant of this query:
+
+```promql
+count by (http_route) (http_server_request_duration_seconds_count{kubernetes_namespace="elite"})
 ```
 
 Drop the `sum(...)` and it breaks down by route, which is the version worth looking at. Two
