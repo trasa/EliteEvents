@@ -1,0 +1,121 @@
+#!/bin/bash
+# Makes the Lens-installed Prometheus in `lens-metrics` usable for this project's metrics.
+#
+# Two things are wrong with it out of the box, and neither is a bug — Lens tunes that stack for
+# its own live cluster charts, not for anything you would keep:
+#
+#   1. Every service-discovery job is namespace-scoped to `lens-metrics`, so it will never
+#      discover the `elite` pods no matter what prometheus.io annotations they carry.
+#   2. Retention is 2 days, which cannot draw a daily trend of anything.
+#
+# This script fixes both, idempotently. It is a script rather than a one-time `kubectl edit`
+# because the stack is *Lens-managed*: reinstalling or upgrading the Lens metrics stack rewrites
+# both objects and silently reverts everything here. Re-run it if the graphs go flat.
+#
+# It deliberately does NOT live in k8s/kustomization.yaml. Kustomize would then own objects Lens
+# also owns, and the two would fight on every Lens restart; a script that patches on demand loses
+# that argument on purpose.
+set -euo pipefail
+
+NAMESPACE="${NAMESPACE:-lens-metrics}"
+RETENTION="${RETENTION:-30d}"
+
+# Named explicitly rather than inherited from the ambient context, for the reason spelled out at
+# length in ./deploy-k8s: starting Docker Desktop repoints `current-context` at a local cluster,
+# and every kubectl below would then "succeed" against the wrong one.
+KUBE_CONTEXT="${KUBE_CONTEXT:-do-sfo3-elite}"
+
+if ! kubectl config get-contexts -o name | grep -qxF "$KUBE_CONTEXT"; then
+    echo "Refusing to patch: no kube context named '${KUBE_CONTEXT}'." >&2
+    kubectl config get-contexts -o name | sed 's/^/  /' >&2
+    exit 1
+fi
+
+KUBECTL=(kubectl --context="$KUBE_CONTEXT" --namespace="$NAMESPACE")
+echo "Patching Prometheus in ${KUBE_CONTEXT}/${NAMESPACE}"
+
+# ---- 1. widen the pod-discovery job to include `elite` --------------------------------------
+#
+# Only the `kubernetes-pods` job is widened. The other jobs (`kubernetes-service-endpoints`,
+# `kubernetes-services`) stay scoped to lens-metrics: this app is scraped by pod annotation, on a
+# port the Service does not expose, so widening those would add discovery churn and no targets.
+CONFIG="$("${KUBECTL[@]}" get configmap prometheus-config -o jsonpath='{.data.prometheus\.yaml}')"
+
+if [ -z "$CONFIG" ]; then
+    echo "prometheus-config has no prometheus.yaml key — has Lens changed the stack layout?" >&2
+    exit 1
+fi
+
+# The `kubernetes-pods` job is the LAST job in the file, and its namespace list is the last
+# occurrence of this block. Anchoring on the trailing `- role: pod` is what keeps this from
+# rewriting the etcd job above it, which also uses `role: pod` but has no namespace list.
+PATCHED="$(NEW_CONFIG="$CONFIG" python3 - <<'PY'
+import os, re, sys
+
+config = os.environ["NEW_CONFIG"]
+
+# Find the kubernetes-pods job and the namespace list inside its kubernetes_sd_configs.
+job = config.find("job_name: 'kubernetes-pods'")
+if job == -1:
+    sys.exit("could not find the kubernetes-pods job in prometheus.yaml")
+
+block = re.compile(r"(- role: pod\n(\s+)namespaces:\n\s+names:\n)((?:\s+- \S+\n)+)")
+match = block.search(config, job)
+if not match:
+    sys.exit("kubernetes-pods has no namespaces list to widen — layout changed?")
+
+existing = re.findall(r"- (\S+)", match.group(3))
+if "elite" in existing:
+    sys.stderr.write("kubernetes-pods already discovers: %s\n" % ", ".join(existing))
+    print(config, end="")
+    sys.exit(0)
+
+indent = re.match(r"\s*", match.group(3)).group(0)
+widened = match.group(3) + indent + "- elite\n"
+sys.stderr.write("kubernetes-pods: %s -> %s\n" % (", ".join(existing), ", ".join(existing + ["elite"])))
+print(config[:match.start(3)] + widened + config[match.end(3):], end="")
+PY
+)"
+
+"${KUBECTL[@]}" create configmap prometheus-config \
+    --from-literal=prometheus.yaml="$PATCHED" \
+    --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f - > /dev/null
+
+# ---- 2. retention ---------------------------------------------------------------------------
+#
+# Only retention.time is raised. retention.size stays at Lens's 5GiB, which is the actual
+# guard-rail: it caps the PVC no matter how wrong the time estimate turns out to be, and whichever
+# limit is hit first wins. 30d of this cluster's series is a few hundred MB, so time is what binds.
+CURRENT="$("${KUBECTL[@]}" get statefulset prometheus \
+    -o jsonpath='{.spec.template.spec.containers[0].args}' | tr ',' '\n' \
+    | grep -o 'retention\.time=[^"]*' || true)"
+
+if [ "$CURRENT" = "retention.time=${RETENTION}" ]; then
+    echo "Retention already ${RETENTION}"
+else
+    echo "Retention: ${CURRENT:-unset} -> retention.time=${RETENTION}"
+    # Indexed JSON-patch on the exact arg, so the rest of the arg vector is left alone. The index
+    # is looked up rather than hardcoded: Lens has reordered these before.
+    INDEX="$("${KUBECTL[@]}" get statefulset prometheus -o json \
+        | python3 -c 'import json,sys; a=json.load(sys.stdin)["spec"]["template"]["spec"]["containers"][0]["args"]; print(next(i for i,v in enumerate(a) if v.startswith("--storage.tsdb.retention.time=")))')"
+    "${KUBECTL[@]}" patch statefulset prometheus --type=json \
+        -p "[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/args/${INDEX}\",\"value\":\"--storage.tsdb.retention.time=${RETENTION}\"}]" > /dev/null
+fi
+
+# ---- 3. restart ------------------------------------------------------------------------------
+#
+# Required, and not just for the StatefulSet change. This Prometheus runs without
+# --web.enable-lifecycle and without a config-reloader sidecar, so there is no way to make it
+# re-read prometheus.yaml short of restarting the pod. The 2 days of data that costs is the exact
+# data this script exists because nobody wanted.
+echo "Restarting prometheus to pick up the config..."
+"${KUBECTL[@]}" rollout restart statefulset prometheus
+"${KUBECTL[@]}" rollout status statefulset prometheus --timeout=180s
+
+cat <<'DONE'
+
+Done. Targets take up to a scrape interval (15s) to appear. To check:
+
+  kubectl --context do-sfo3-elite -n lens-metrics port-forward svc/prometheus 9090:80
+  open http://localhost:9090/targets      # want job="web", 2 up
+DONE

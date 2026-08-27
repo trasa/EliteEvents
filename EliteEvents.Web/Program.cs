@@ -3,6 +3,7 @@ using EliteEvents.Eddn.Storage;
 using EliteEvents.Web.Components;
 using EliteEvents.Web.Endpoints;
 using EliteEvents.Web.Services;
+using OpenTelemetry.Metrics;
 
 // The public web tier: reads Redis, renders HTML, and never writes. It is deliberately
 // stateless — static SSR Razor Components (no circuit, no WebSocket) plus htmx — so any pod can
@@ -53,7 +54,47 @@ builder.Services.AddHealthChecks()
     .AddCheck<RedisLivenessHealthCheck>("redis-liveness", tags: ["live"])
     .AddCheck<EddnStreamHealthCheck>("eddn-stream");
 
+// Prometheus metrics. Nothing here instruments the app by hand: ASP.NET Core already publishes a
+// Microsoft.AspNetCore.Hosting meter, whose http.server.request.duration histogram carries a
+// per-route request count. That count is the visit graph — the exporter renders it as
+// http_server_request_duration_seconds_count, labelled with the route *template* rather than the
+// filled URL, so /system/{SystemName} is one series no matter how many systems get looked at.
+//
+// System.Runtime is along for the ride and is the line to delete if this ever needs trimming. It
+// costs one meter and gives GC heap size and working set per pod, which is the measurement the
+// DOTNET_GCHeapHardLimitPercent note in k8s/30-web.yaml asks for and has so far been taken by
+// hand after every change.
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(metrics => metrics
+        .AddMeter("Microsoft.AspNetCore.Hosting")
+        .AddMeter("System.Runtime")
+        .AddPrometheusExporter());
+
 var app = builder.Build();
+
+// /metrics answers on the metrics port and nowhere else, and the metrics port answers /metrics and
+// nothing else. Both halves matter, because the ingress routes `path: /` Prefix to this app: with
+// the scrape endpoint on the main port, elite.meancat.com/metrics would be public.
+//
+// The test is the local port the connection actually arrived on, not the Host header. RequireHost
+// ("*:9090") reads like the same check and is not one — ingress-nginx forwards the client's Host
+// verbatim, so anyone willing to send `Host: x:9090` would come straight through it.
+//
+// Registered before everything else so a rejection is a bare 404: UseStatusCodePagesWithReExecute
+// is added further down, which puts it *inside* this middleware, and short-circuiting here means
+// it never runs. A scrape of the wrong port should not cost a re-executed Razor render.
+app.Use(async (context, next) =>
+{
+    var onMetricsPort = context.Connection.LocalPort == MetricsPort;
+    var wantsMetrics = context.Request.Path.StartsWithSegments("/metrics");
+    if (wantsMetrics != onMetricsPort)
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    await next(context);
+});
 
 if (!app.Environment.IsDevelopment())
 {
@@ -82,4 +123,15 @@ app.MapFragmentEndpoints();
 app.MapStreamEndpoint();
 app.MapLegacyRedirects();
 
+app.MapPrometheusScrapingEndpoint();
+
 app.Run();
+
+// Kept in sync by hand with three places, none of which can read it: ASPNETCORE_HTTP_PORTS in
+// Dockerfile.web (which is what actually opens the socket), applicationUrl in launchSettings.json,
+// and prometheus.io/port in k8s/30-web.yaml. Changing it in one place alone fails quietly — the
+// scrape 404s, and the site keeps serving.
+public partial class Program
+{
+    private const int MetricsPort = 9090;
+}

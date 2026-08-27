@@ -18,6 +18,17 @@ spec:
     metadata:
       labels:
         app: web
+      # Scraped by the Prometheus in the lens-metrics namespace. Its `kubernetes-pods` job is
+      # namespace-scoped and does NOT include `elite` out of the box — these annotations do
+      # nothing until that job's namespace list is widened. See k8s/README.md ("Metrics").
+      #
+      # Port 9090 is the app's second Kestrel listener, not the Service port: Program.cs answers
+      # /metrics there and only there, so the scrape reaches the pod IP directly and nothing is
+      # published through the ingress. If this number and MetricsPort in Program.cs ever disagree
+      # the scrape just 404s — the site keeps serving, so nothing else will tell you.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
     spec:
       # See the note in 20-ingestion.yaml: DOKS names this after the registry.
       imagePullSecrets:
@@ -41,6 +52,11 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            # Declared for documentation and for the scrape annotation above to point at. The
+            # Service deliberately does not expose it — see the targetPort at the bottom of this
+            # file, which names `http` rather than a port number.
+            - name: metrics
+              containerPort: 9090
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: Production

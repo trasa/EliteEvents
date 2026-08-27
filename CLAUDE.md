@@ -233,6 +233,34 @@ only Redis, because a silent firehose must not drain the Service while pods stil
 data. Web additionally serves `/health` (plain text, all checks) and `/api/health` (JSON,
 `{"status":"ok","redis":"ok"}`) for uptime monitors.
 
+## Metrics
+
+`EliteEvents.Web` exports Prometheus metrics; **Ingestion does not** (its `/health/stream` already
+answers the only question anyone asks of it). Setup is the OpenTelemetry Prometheus exporter over
+the meters the runtime already publishes — `Microsoft.AspNetCore.Hosting` for per-route request
+counts and `System.Runtime` for GC/working-set — so there is no hand-written instrumentation and
+adding a page adds a series automatically. Labels carry the route *template*, which is what keeps
+`/system/{SystemName}` from becoming one series per system.
+
+**`/metrics` is served on port 9090 and nothing else is, in both directions.** `Program.cs` gates
+it on `HttpContext.Connection.LocalPort`, not on the `Host` header: the ingress is a single
+`path: /` Prefix rule, so on the main port the scrape page would be public at
+`elite.meancat.com/metrics`, and `RequireHost("*:9090")` would not prevent that — ingress-nginx
+forwards the client's `Host` verbatim. The port number lives in four places that cannot read each
+other (`MetricsPort` in `Program.cs`, `ASPNETCORE_HTTP_PORTS` in `Dockerfile.web`, `applicationUrl`
+in `launchSettings.json`, `prometheus.io/port` in `k8s/30-web.yaml`); disagreement 404s the scrape
+and leaves the site serving normally, so nothing surfaces it.
+
+`ASPNETCORE_HTTP_PORTS` rather than `ConfigureKestrel(...Listen...)` is load-bearing: an explicit
+`Listen()` call makes Kestrel ignore that variable *and* `applicationUrl`, which would move the
+site off 8080 as a side effect of adding a metrics port.
+
+Scraping is done by the Prometheus **Lens** installed in `lens-metrics`, which needs two patches
+before it can see any of this — its service discovery is namespace-scoped to `lens-metrics`, and
+its retention is 2 days. `k8s/patch-lens-prometheus` applies both, idempotently, and has to be
+re-run after a Lens upgrade reverts them. There is no Grafana. Full detail, and the PromQL for
+page views per day, are in `k8s/README.md`.
+
 ## EDDN message types are code-generated
 
 `EliteEvents.Eddn/Generated/*.g.cs` are **generated and gitignored**. The `NSwag` target in
@@ -271,6 +299,10 @@ cd operator && make deploy IMG=<image> KUBE_CONTEXT=do-sfo3-elite
 ./deploy-k8s <tag> # write the tag into kustomization.yaml, apply, wait for both rollouts
                    # commit kustomization.yaml afterwards — it records the deployed version
                    # targets KUBE_CONTEXT (default do-sfo3-elite), never the ambient context
+
+# Metrics: teach the Lens-installed Prometheus to scrape `elite` and keep 30 days of it.
+# Idempotent, and needs re-running whenever a Lens upgrade reverts the stack.
+./k8s/patch-lens-prometheus
 ```
 
 ### Tests

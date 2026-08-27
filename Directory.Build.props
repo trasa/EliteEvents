@@ -10,5 +10,10 @@
   <PropertyGroup>
     <EliteJournalReaderVersion>4.2.1-alpha.gb140ebb864</EliteJournalReaderVersion>
     <NewtonsoftJsonVersion>13.0.4</NewtonsoftJsonVersion>
+    <!-- The Prometheus exporter has no stable release and has shipped as -beta for years; it is
+         pinned to the same 1.x as the stable OpenTelemetry packages it rides on. Bump both
+         together — a beta exporter against a mismatched core is the one combination that breaks. -->
+    <OpenTelemetryVersion>1.18.0</OpenTelemetryVersion>
+    <OpenTelemetryPrometheusVersion>1.18.0-beta.1</OpenTelemetryPrometheusVersion>
   </PropertyGroup>
 </Project>

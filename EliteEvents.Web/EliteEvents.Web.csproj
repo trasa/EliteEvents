@@ -13,6 +13,14 @@
         <PackageReference Include="Newtonsoft.Json" Version="$(NewtonsoftJsonVersion)" />
     </ItemGroup>
     <ItemGroup>
+        <!-- Metrics only: no tracing, no collector, no OTLP. The exporter turns the meters ASP.NET
+             Core already emits into a Prometheus scrape page, which is the whole of the
+             observability story here. No instrumentation package is needed — the
+             Microsoft.AspNetCore.Hosting and System.Runtime meters are built into the runtime. -->
+        <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="$(OpenTelemetryVersion)" />
+        <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="$(OpenTelemetryPrometheusVersion)" />
+    </ItemGroup>
+    <ItemGroup>
         <ProjectReference Include="../EliteEvents.Eddn/EliteEvents.Eddn.csproj" />
     </ItemGroup>
 </Project>

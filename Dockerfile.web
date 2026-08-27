@@ -20,8 +20,14 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
 
-# The aspnet image listens on 8080 by default and ships a non-root 'app' user.
-EXPOSE 8080
+# The aspnet image listens on 8080 by default and ships a non-root 'app' user. 9090 is added for
+# the Prometheus scrape endpoint, which Program.cs serves *only* there — the ingress routes
+# `path: /` to 8080, so a single-port build would publish /metrics on elite.meancat.com. Setting
+# ASPNETCORE_HTTP_PORTS rather than calling Kestrel's Listen() in code is deliberate: an explicit
+# Listen() makes Kestrel ignore this variable and applicationUrl both, which would silently move
+# the site off 8080.
+ENV ASPNETCORE_HTTP_PORTS="8080;9090"
+EXPOSE 8080 9090
 USER $APP_UID
 
 ENTRYPOINT ["dotnet", "EliteEvents.Web.dll"]

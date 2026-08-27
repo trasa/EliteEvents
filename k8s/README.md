@@ -305,6 +305,80 @@ Note that CS260's raw TCP/UDP assignment ports do **not** go through this ingres
 own pass-through load balancer, because nginx stream proxying would rewrite the source address.
 Nothing you do to ingress-nginx affects those.
 
+## Metrics
+
+Traffic graphs for `elite.meancat.com` come out of the Prometheus that **Lens** installed in the
+`lens-metrics` namespace, alongside node-exporter and kube-state-metrics. There is no Grafana and
+no plan for one — the Prometheus expression browser draws the graph, and on a two-node cluster
+whose per-node limits already run at 95–100% of allocatable, a dashboard pod is a real cost for a
+number that gets looked at once a week.
+
+The web pods export metrics themselves; nothing counts requests at the ingress. That is a
+deliberate choice and the reason is the ingress: `k8s/40-ingress.yaml` has a single `path: /`
+Prefix rule, so ingress-nginx's `path` label collapses every request to one series — page views,
+static assets, `/api`, and the SSE ticker all indistinguishable. The app knows its own routes.
+
+**Nothing was written to produce these numbers.** ASP.NET Core already publishes a
+`Microsoft.AspNetCore.Hosting` meter; `EliteEvents.Web/Program.cs` adds the OpenTelemetry
+Prometheus exporter and nothing else. Labels carry the route *template*, so `/system/{SystemName}`
+stays one series however many systems get looked at. Roughly 165 series per pod.
+
+`/metrics` is served on **port 9090 only**, and port 9090 serves nothing else. Both halves are
+enforced in `Program.cs` by the local port the connection arrived on. This matters because the
+ingress routes `/` Prefix to the web Service: on the main port, `/metrics` would be public at
+`elite.meancat.com/metrics`. The port comes from `ASPNETCORE_HTTP_PORTS` in `Dockerfile.web` and
+must agree with `MetricsPort` in `Program.cs` and `prometheus.io/port` in `30-web.yaml`; when they
+disagree the scrape 404s and the site keeps serving, so nothing announces it.
+
+### The Lens stack needs patching, and needs it again after every Lens upgrade
+
+Out of the box that Prometheus cannot answer this question at all, for two unrelated reasons:
+
+- **Every service-discovery job is namespace-scoped to `lens-metrics`.** The `prometheus.io/scrape`
+  annotations on the web pods do nothing until the `kubernetes-pods` job's namespace list includes
+  `elite`.
+- **Retention is 2 days.** Fine for the live charts in the Lens UI, useless for a daily trend.
+
+```bash
+./k8s/patch-lens-prometheus        # idempotent; KUBE_CONTEXT and RETENTION are overridable
+```
+
+Both fixes are patches to objects **Lens owns**, so reinstalling or upgrading the Lens metrics
+stack silently reverts them and the graphs go flat. Re-run the script; that is why it is a script
+and not a one-time `kubectl edit`. It is deliberately not in `kustomization.yaml` — kustomize
+would then own objects Lens also owns and the two would fight on every Lens restart.
+
+The restart at the end is not optional. This Prometheus runs with neither `--web.enable-lifecycle`
+nor a config-reloader sidecar, so a ConfigMap edit alone changes nothing.
+
+### Reading it
+
+```bash
+kubectl --context do-sfo3-elite -n lens-metrics port-forward svc/prometheus 9090:80
+open http://localhost:9090/graph
+```
+
+Page views per day, health probes and the ticker excluded:
+
+```promql
+sum(increase(http_server_request_duration_seconds_count{
+  kubernetes_namespace="elite",
+  http_route!~"/health.*|/api/.*|/fragments/.*|/metrics"
+}[1d]))
+```
+
+Drop the `sum(...)` and it breaks down by route, which is the version worth looking at. Two
+things to know before trusting a number:
+
+- **The counters are per-pod and reset on restart.** `increase()` handles resets, which is why the
+  query uses it rather than subtracting raw counter values.
+- **`/api/stream` records on connection close, not open.** The SSE ticker holds a connection for
+  as long as the tab is open, so it lands in whatever day it ends in. It is excluded above.
+
+`dotnet_process_memory_working_set_bytes` and `dotnet_gc_heap_*` are exported too, which is the
+measurement the `DOTNET_GCHeapHardLimitPercent` comment in `30-web.yaml` asks for and that has so
+far been taken by hand after every change.
+
 ## Things worth knowing
 
 **A brand-new cluster starts NotReady, briefly.** The Redis health check reports Unhealthy until
