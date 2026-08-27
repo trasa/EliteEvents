@@ -326,9 +326,13 @@ stays one series however many systems get looked at. Roughly 165 series per pod.
 `/metrics` is served on **port 9090 only**, and port 9090 serves nothing else. Both halves are
 enforced in `Program.cs` by the local port the connection arrived on. This matters because the
 ingress routes `/` Prefix to the web Service: on the main port, `/metrics` would be public at
-`elite.meancat.com/metrics`. The port comes from `ASPNETCORE_HTTP_PORTS` in `Dockerfile.web` and
-must agree with `MetricsPort` in `Program.cs` and `prometheus.io/port` in `30-web.yaml`; when they
-disagree the scrape 404s and the site keeps serving, so nothing announces it.
+`elite.meancat.com/metrics`. The socket is opened by `ASPNETCORE_HTTP_PORTS` in `Dockerfile.web`
+and must agree with `Metrics:Port` (which decides what the endpoint answers on) and with
+`prometheus.io/port` in `30-web.yaml`; when they disagree the scrape 404s and the site keeps
+serving, so nothing announces it.
+
+Note that **local development uses 5241** for this, because 9090 is the port you port-forward
+Prometheus to below — see the note in `CLAUDE.md`. Production is 9090 at both ends.
 
 ### The Lens stack needs patching, and needs it again after every Lens upgrade
 

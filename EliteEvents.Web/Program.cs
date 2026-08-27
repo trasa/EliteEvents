@@ -64,6 +64,13 @@ builder.Services.AddHealthChecks()
 // costs one meter and gives GC heap size and working set per pod, which is the measurement the
 // DOTNET_GCHeapHardLimitPercent note in k8s/30-web.yaml asks for and has so far been taken by
 // hand after every change.
+// Which port the scrape endpoint answers on. Configurable rather than a const purely so local
+// development can move off 9090: that is the conventional port for `kubectl port-forward
+// svc/prometheus`, and a dev run holding it means the port-forward either fails to bind or you
+// spend a while reading the local app's metrics believing they are the cluster's. In the
+// container it stays 9090, where the pod's network namespace has nothing to collide with.
+var metricsPort = builder.Configuration.GetValue("Metrics:Port", 9090);
+
 builder.Services.AddOpenTelemetry()
     .WithMetrics(metrics => metrics
         .AddMeter("Microsoft.AspNetCore.Hosting")
@@ -85,7 +92,7 @@ var app = builder.Build();
 // it never runs. A scrape of the wrong port should not cost a re-executed Razor render.
 app.Use(async (context, next) =>
 {
-    var onMetricsPort = context.Connection.LocalPort == MetricsPort;
+    var onMetricsPort = context.Connection.LocalPort == metricsPort;
     var wantsMetrics = context.Request.Path.StartsWithSegments("/metrics");
     if (wantsMetrics != onMetricsPort)
     {
@@ -123,15 +130,10 @@ app.MapFragmentEndpoints();
 app.MapStreamEndpoint();
 app.MapLegacyRedirects();
 
+// Metrics:Port only decides which port this endpoint *answers* on; it does not open the socket.
+// That is ASPNETCORE_HTTP_PORTS in Dockerfile.web and applicationUrl in launchSettings.json, and
+// k8s/30-web.yaml's prometheus.io/port is what Prometheus dials. None of the four can read the
+// others, and a disagreement fails quietly: the scrape 404s and the site keeps serving.
 app.MapPrometheusScrapingEndpoint();
 
 app.Run();
-
-// Kept in sync by hand with three places, none of which can read it: ASPNETCORE_HTTP_PORTS in
-// Dockerfile.web (which is what actually opens the socket), applicationUrl in launchSettings.json,
-// and prometheus.io/port in k8s/30-web.yaml. Changing it in one place alone fails quietly — the
-// scrape 404s, and the site keeps serving.
-public partial class Program
-{
-    private const int MetricsPort = 9090;
-}

@@ -246,10 +246,19 @@ adding a page adds a series automatically. Labels carry the route *template*, wh
 it on `HttpContext.Connection.LocalPort`, not on the `Host` header: the ingress is a single
 `path: /` Prefix rule, so on the main port the scrape page would be public at
 `elite.meancat.com/metrics`, and `RequireHost("*:9090")` would not prevent that — ingress-nginx
-forwards the client's `Host` verbatim. The port number lives in four places that cannot read each
-other (`MetricsPort` in `Program.cs`, `ASPNETCORE_HTTP_PORTS` in `Dockerfile.web`, `applicationUrl`
-in `launchSettings.json`, `prometheus.io/port` in `k8s/30-web.yaml`); disagreement 404s the scrape
-and leaves the site serving normally, so nothing surfaces it.
+forwards the client's `Host` verbatim.
+
+The port number lives in places that cannot read each other, and a disagreement 404s the scrape
+while the site keeps serving, so nothing surfaces it. `Metrics:Port` decides which port the
+endpoint *answers* on; it does not open the socket — that is `ASPNETCORE_HTTP_PORTS` in
+`Dockerfile.web` (8080;9090) and `applicationUrl` in `launchSettings.json`. `prometheus.io/port` in
+`k8s/30-web.yaml` is what Prometheus dials.
+
+**Local development runs the metrics port on 5241, not 9090**, set by `Metrics__Port` in
+`launchSettings.json`. 9090 is the conventional port for `kubectl port-forward svc/prometheus`, and
+a dev run holding it means the port-forward fails to bind — or worse, succeeds against the local
+app and you read a laptop's numbers as the cluster's. The container keeps 9090, where the pod's
+network namespace has nothing to collide with.
 
 `ASPNETCORE_HTTP_PORTS` rather than `ConfigureKestrel(...Listen...)` is load-bearing: an explicit
 `Listen()` call makes Kestrel ignore that variable *and* `applicationUrl`, which would move the
