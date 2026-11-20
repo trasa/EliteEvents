@@ -17,6 +17,14 @@ controller:
   publishService:
     enabled: true
 
+  # Entries in the controller ConfigMap (nginx settings).
+  config:
+    # HTTP/2 off: a stopgap for CVE-2026-123007 and CVE-2026-123633 ("nginx2root", 2026-11-18).
+    # Both are bugs in nginx's HTTP/2 code. Controller v1.15.1 bundles nginx 1.27.1, and the fixes
+    # are in nginx 1.30.7 / 1.31.9. Clients drop back to HTTP/1.1, which the SSE streams handle
+    # fine. Remove this once the controller ships a patched nginx (or is replaced).
+    use-http2: "false"
+
   # Two replicas is a hard requirement of externalTrafficPolicy: Local below, not a capacity
   # decision. Local makes only nodes that are running a controller pod valid load balancer
   # targets; at one replica the whole ingress is a single point of failure.
